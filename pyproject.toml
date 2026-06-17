@@ -1,0 +1,37 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "aaronson"
+version = "0.1.0"
+description = "Clifford + noisy stabilizer simulator: noise-free and noisy (importance-sampled) stabilizer simulation with a native core."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "plutoniumm", email = "haskell-game@manav.ch" }]
+keywords = ["quantum", "clifford", "stabilizer", "simulator", "noise", "qec", "tableau"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+dev = ["maturin>=1.7,<2", "twine", "black"]
+bench = ["stim", "pymatching"]
+
+[project.urls]
+Homepage = "https://github.com/plutoniumm/aaronson"
+
+[tool.maturin]
+python-source = "python"
+module-name = "aaronson._core"
+features = ["pyo3/extension-module"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]

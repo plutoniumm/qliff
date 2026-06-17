@@ -1,0 +1,18 @@
+[linter]
+fail_on = "warning"
+
+[python]
+enable = [
+  "py/assert-tuple",            # assert with a tuple is always True
+  "py/bare-except",             # bare except clause
+  "py/comparison-to-bool",      # equality comparison to boolean literal
+  "py/comparison-to-none",      # equality comparison to None
+  "py/empty-docstring",         # empty or whitespace-only docstring
+  "py/f-string-no-placeholder", # f-string without any placeholders
+  "py/mutable-default-arg",     # mutable default argument
+  "py/percent-format",          # %-style string formatting
+  "py/print-statement",         # bare print() call
+  "py/redundant-parens-return", # redundant parentheses in return statement
+  "py/trailing-comma",          # multiline dict literal without trailing comma
+]
+disable = []
