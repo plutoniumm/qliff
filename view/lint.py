@@ -9,7 +9,7 @@ from .lint_checks import check_py
 
 ROOT = Path(__file__).parent.parent
 PY_FILES = (
-    sorted(ROOT.glob("python/aaronson/**/*.py"))
+    sorted(ROOT.glob("aaronson/**/*.py"))
     + sorted(ROOT.glob("test/*.py"))
     + sorted(ROOT.glob("view/*.py"))
 )

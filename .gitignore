@@ -6,9 +6,9 @@ dist/
 build/
 *.egg-info/
 
-python/aaronson/_core*.so
-python/aaronson/_core*.pyd
-python/aaronson/_core*.dylib
+aaronson/_core*.so
+aaronson/_core*.pyd
+aaronson/_core*.dylib
 
 **/_reports/
 
@@ -18,3 +18,7 @@ python/aaronson/_core*.dylib
 /base/
 
 .DS_Store
+docs/.vitepress
+.claude/
+
+.ruff_cache/

@@ -47,7 +47,7 @@ def _frame2(name, targets, x, z):
 
 def _propagate(circuit, loc, fx, fz):
     """
-    Inject the Pauli fault (fx, fz) at instruction ``loc`` and propagate it
+    Inject the Pauli fault (fx, fz) at instruction loc and propagate it
     sign-free to the end, returning the set of measurement indices it flips.
     """
     n = circuit.num_qubits
@@ -94,12 +94,10 @@ def _combine(p, q):
 
 class DetectorErrorModel:
     """
-    First-order detector error model from exact Pauli-frame propagation.
-
-    Each Pauli fault branch at each noise location is propagated sign-free to the
-    end of the circuit to find the detectors and observables it flips; mechanisms
-    with identical signatures merge as independent errors. Pauli noise only. No
-    decoder is bundled -- the exporters feed MWPM / BP / ML.
+    First-order detector error model. Each Pauli fault branch is propagated sign-free
+    to the circuit end to find the detectors/observables it flips; branches with equal
+    signatures merge as independent errors. Pauli noise only; exporters feed
+    MWPM / BP / ML (no decoder bundled).
     """
 
     def __init__(self, circuit):
@@ -133,10 +131,10 @@ class DetectorErrorModel:
 
     def check_matrix(self):
         """
-        Return ``(H, priors, observable_matrix)`` numpy arrays for BP decoders.
+        Return (H, priors, observable_matrix) numpy arrays for BP decoders.
 
-        ``H`` is (detectors x mechanisms) uint8, ``observable_matrix`` is
-        (observables x mechanisms) uint8, ``priors`` holds per-mechanism
+        H is (detectors x mechanisms) uint8, observable_matrix is
+        (observables x mechanisms) uint8, priors holds per-mechanism
         probabilities.
         """
         nm = len(self.mechanisms)
@@ -154,7 +152,7 @@ class DetectorErrorModel:
 
     def weights(self):
         """
-        Per-mechanism MWPM weights ``log((1-p)/p)``.
+        Per-mechanism MWPM weights log((1-p)/p).
         """
         priors = np.array([p for p, _, _ in self.mechanisms])
 
@@ -163,7 +161,7 @@ class DetectorErrorModel:
     def graphlike_edges(self):
         """
         Mechanisms flipping at most two detectors, as
-        ``(detectors, observables, weight)`` tuples -- a matching graph.
+        (detectors, observables, weight) tuples -- a matching graph.
         """
         edges = []
         for p, dets, obs in self.mechanisms:

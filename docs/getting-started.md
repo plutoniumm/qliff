@@ -1,7 +1,7 @@
 # Getting Started
 
 `aaronson` is a Clifford **+** noisy stabilizer simulator. The tableau lives in a
-native Rust core (PyO3/maturin); everything you read, extend, or override is
+native Rust core (PyO3 + setuptools-rust); everything you read, extend, or override is
 plain Python. The API is stim-style uppercase, so circuits read the way you would
 write them on paper.
 

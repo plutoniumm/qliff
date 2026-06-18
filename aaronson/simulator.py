@@ -23,9 +23,9 @@ class Simulator:
     """
     A Clifford stabilizer simulator with a stim-style uppercase API.
 
-    Starts in ``|0...0>``. Single-qubit gates accept one or more targets;
-    two-qubit gates take flattened ``(control, target)`` pairs, e.g.
-    ``sim.CX(0, 1, 2, 3)``. Gate methods return ``self`` so calls chain.
+    Starts in |0...0>. Single-qubit gates accept one or more targets;
+    two-qubit gates take flattened (control, target) pairs, e.g.
+    sim.CX(0, 1, 2, 3). Gate methods return self so calls chain.
     """
 
     def __init__(self, num_qubits, seed=None):
@@ -103,13 +103,10 @@ class Simulator:
 
     def measure_pauli(self, pauli, force=None):
         """
-        Measure a Hermitian Pauli observable in place; return ``(value, random)``.
-
-        ``value`` is +1 or -1 and ``random`` says whether the outcome was a coin
-        flip (vs forced by the state). ``pauli`` is a :class:`PauliString` or a
-        signed string like ``"ZZ"`` -- this measures multi-qubit stabilizers, the
-        primitive behind syndrome extraction. A random outcome can be pinned with
-        ``force=+1`` or ``force=-1`` to project onto a chosen eigenspace.
+        Measure Hermitian pauli (PauliString or signed string like "ZZ") in
+        place; return (value=+-1, random) where random flags a coin-flip
+        outcome. force=+-1 pins a random outcome onto that eigenspace -- the
+        multi-qubit-stabilizer primitive behind syndrome extraction.
         """
         if isinstance(pauli, str):
             pauli = PauliString.parse(pauli)
@@ -131,10 +128,8 @@ class Simulator:
 
     def peek_observable(self, pauli):
         """
-        Expectation ``<P>`` in {-1, 0, +1} for a Hermitian Pauli ``P``.
-
-        ``pauli`` is a :class:`~aaronson.pauli.PauliString` or a signed-Pauli
-        string such as ``"ZZ"`` or ``"-X"``. Does not disturb the state.
+        Expectation <P> in {-1, 0, +1} for Hermitian Pauli P (PauliString or
+        signed string like "ZZ", "-X"). Does not disturb the state.
         """
         if isinstance(pauli, str):
             pauli = PauliString.parse(pauli)

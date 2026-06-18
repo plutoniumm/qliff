@@ -1,6 +1,6 @@
 # aaronson
 
-A Clifford + noisy stabilizer simulator with a native Rust core.
+A Clifford stabilizer simulator with with support for noisy and mid circuit measurement-based simulations.
 
 - **Noise-free Clifford simulation** via the CHP / Aaronson–Gottesman tableau (bit-packed,
   in Rust), with a stim-style uppercase API (`H`, `S`, `CX`, `CZ`, `M`, `R`, …). Verified
@@ -13,7 +13,6 @@ A Clifford + noisy stabilizer simulator with a native Rust core.
   priors, matching weights, syndrome/label tensors). No decoder is bundled — these drop
   straight into MWPM (pymatching), BP, or ML decoders.
 
-> 🚧 Early development (0.1.0). APIs may change freely pre-1.0.
 
 ## Install
 
@@ -29,7 +28,7 @@ Full documentation (quickstart, Simulator, Circuit, observables, noise, QEC) liv
 ```python
 from aaronson import Simulator, state_fidelity
 
-s = Simulator(2).H(0).CX(0, 1)        # Bell state (gates chain)
+s = Simulator(2).H(0).CX(0, 1)
 s.canonical_stabilizers()              # ['+XX', '+ZZ']
 s.peek_observable("ZZ")                # +1   (read an expectation, no collapse)
 s.measure_pauli("XX")                  # (+1, False) — multi-qubit stabilizer measurement
@@ -42,12 +41,17 @@ so conditionals (teleportation, syndrome correction) need no special API:
 
 ```python
 s = Simulator(3, seed=0)
-s.H(0)                                  # message qubit
-s.H(1).CX(1, 2)                         # Bell pair
+s.H(0)
+s.H(1).CX(1, 2)
 s.CX(0, 1).H(0)
-if s.M(1): s.X(2)                       # classical feedback
-if s.M(0): s.Z(2)
-s.peek_observable("__X")                # +1: state teleported to qubit 2
+
+# conditional gates
+if s.M(1):
+  s.X(2)
+if s.M(0):
+  s.Z(2)
+
+s.peek_observable("__X") # +1: teleported to qubit 2
 ```
 
 ## Noise
@@ -87,12 +91,12 @@ curve. Any circuit's detectors and observables are declared with `c.detector(...
 
 ```python
 from aaronson.qec import rotated_surface_code, logical_fidelity
-import pymatching
+from pymatching import Matching
 
 c = rotated_surface_code(distance=5, rounds=5, p=0.01)
 dem = c.dem()                                            # detector error model
 H, priors, obs_matrix = dem.check_matrix()               # feed BP, or MWPM:
-m = pymatching.Matching.from_check_matrix(H, weights=dem.weights(), faults_matrix=obs_matrix)
+m = Matching.from_check_matrix(H, weights=dem.weights(), faults_matrix=obs_matrix)
 
 dets, flips = c.detector_sampler().sample(20000)         # syndrome + label tensors (numpy)
 fidelity = logical_fidelity(m.decode_batch(dets), flips) # 1 - logical error rate
@@ -111,14 +115,15 @@ fast tableau engine.
 ## Develop
 
 ```sh
-./do develop   # build the native core into the active env
-./do test      # run the exam test suite
-./do lint      # qudit-style view/ linter + black  (./do lint --fix to autofix)
-./do bench     # benchmarks + correctness vs stim (installs the `bench` extra)
-./do docs      # build the VitePress docs site
-./do deploy    # build wheel + sdist and upload to PyPI
+./do develop   # build rust core
+./do test      # run tests
+./do lint
+./do bench
+./do docs      # build docs
+./do deploy    # deploy docs
 ```
 
 ## License
-
 MIT
+
+If you are a company using this, please get a grad student to help you with issues. If you are a grad student, please feel free to email me :)

@@ -6,11 +6,9 @@ from .channel import make_channel
 
 class MonteCarlo:
     """
-    Plain Monte-Carlo trajectory sampler for Pauli noise.
-
-    Each trajectory runs the circuit on a fresh stabilizer state, sampling one
-    Pauli branch per noise location. Pauli channels only; coherent/general
-    channels raise here and need :class:`ImportanceSampler`.
+    Plain Monte-Carlo sampler: each trajectory runs the circuit on a fresh state,
+    drawing one Pauli branch per noise location. Pauli channels only -- coherent ones
+    raise and need ImportanceSampler.
     """
 
     def __init__(self, circuit):
@@ -37,7 +35,7 @@ class MonteCarlo:
 
     def sample(self, shots, seed=None):
         """
-        Run ``shots`` trajectories; return one measurement record (list of 0/1)
+        Run shots trajectories; return one measurement record (list of 0/1)
         per shot.
         """
         rng = random.Random(seed)
@@ -49,7 +47,7 @@ class MonteCarlo:
 
     def expect(self, observable, shots, seed=None):
         """
-        Estimate ``<O>`` by averaging a Pauli observable over trajectories.
+        Estimate <O> by averaging a Pauli observable over trajectories.
 
         The circuit should end without measurements; the observable is peeked on
         each trajectory's final state.
@@ -64,13 +62,9 @@ class MonteCarlo:
 
 class ImportanceSampler:
     """
-    Importance sampler for general (quasiprobability) noise.
-
-    Each trajectory samples one stabilizer-channel branch per noise location and
-    accumulates an importance weight (the product of the per-channel
-    ``sign * gamma`` factors). ``expect`` returns the reweighted estimate of
-    ``<O>``, which is unbiased for the true noisy expectation even when channels
-    are coherent. Pauli channels work too (every weight is 1).
+    Importance sampler for general (quasiprobability) noise. Each trajectory draws
+    one branch per location and carries weight w = prod(sign * gamma); expect
+    returns mean(w * <O>), unbiased even for coherent channels (Pauli: w = 1).
     """
 
     def __init__(self, circuit):
@@ -92,7 +86,7 @@ class ImportanceSampler:
 
     def expect(self, observable, shots, seed=None):
         """
-        Estimate ``<O>`` over ``shots`` reweighted trajectories.
+        Estimate <O> over shots reweighted trajectories.
         """
         rng = random.Random(seed)
         total = 0.0
@@ -105,9 +99,8 @@ class ImportanceSampler:
 
 def _poisson_binomial(phis):
     """
-    Probability of exactly k successes for independent Bernoulli ``phis``.
-
-    Returns a list ``P`` with ``P[k]`` for k in 0..len(phis).
+    P[k] = prob of exactly k successes over independent Bernoulli phis
+    (k in 0..len), folded in one pass: P <- P*(1-phi) shifted-add P*phi.
     """
     probs = [1.0]
     for phi in phis:
@@ -122,12 +115,12 @@ def _poisson_binomial(phis):
 
 class StratifiedSampler:
     """
-    Importance sampler stratified by fault count -- the variance-reduction layer.
+    Importance sampler stratified by fault count (variance reduction).
 
-    The estimate is ``sum_k P(k) F_k``: ``P(k)`` is the exact Poisson-binomial
-    probability of ``k`` faulty locations and ``F_k`` the importance estimate
-    conditioned on exactly ``k`` faults. Stratifying cuts variance versus a flat
-    importance sampler at the same shot budget. Unbiased for any channel set.
+    Estimate = sum_k P(k) F_k: P(k) the exact Poisson-binomial prob of k
+    faulty locations, F_k the importance estimate conditioned on k faults.
+    Lower variance than flat importance sampling at equal shots; unbiased for any
+    channels.
     """
 
     def __init__(self, circuit):
@@ -145,6 +138,9 @@ class StratifiedSampler:
         self.pk = _poisson_binomial(self.phis)
 
     def _fault_set(self, k, rng):
+        # sample exactly k faulty locations from the Poisson-binomial.
+        # suffix[i][j] = prob locations i.. yield j faults (DP, built backwards);
+        # then walk forward, including i with its conditional prob given faults left.
         phis = self.phis
         a = len(phis)
         suffix = [[0.0] * (a + 1) for _ in range(a + 1)]
@@ -203,7 +199,7 @@ class StratifiedSampler:
 
     def expect(self, observable, shots, seed=None):
         """
-        Stratified estimate of ``<O>`` using about ``shots`` trajectories.
+        Stratified estimate of <O> using about shots trajectories.
         """
         rng = random.Random(seed)
         total = 0.0

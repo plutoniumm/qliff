@@ -1,13 +1,13 @@
 {
-  "name": "aaronson-docs",
+  "name": "aaronson",
   "version": "0.1.0",
   "private": true,
-  "description": "Documentation site for aaronson (VitePress).",
+  "description": "Documentation aaronson: Aaronson-Gottesman Tableu based quantum circuit simulator",
   "type": "module",
   "scripts": {
-    "docs:dev": "vitepress dev",
-    "docs:build": "vitepress build",
-    "docs:preview": "vitepress preview"
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "deploy": "npx -y gh-pages -dj docs/.vitepress/dist"
   },
   "devDependencies": {
     "markdown-it-mathjax3": "^4.3.2",

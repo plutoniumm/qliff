@@ -3,86 +3,133 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# PyO3 abi3 wheels are forward-compatible; build on Python newer than PyO3 knows.
 export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
-# resolve the interpreter: AARONSON_PY -> active conda env -> python3 on PATH.
-resolve_py() {
-  if [ -n "${AARONSON_PY:-}" ]; then PY="$AARONSON_PY"
-  elif [ -n "${CONDA_PREFIX:-}" ]; then PY="$CONDA_PREFIX/bin/python"
-  else PY="$(command -v python3 || true)"
+# fail early if a required tool is missing (the conda env is expected to be active).
+has() {
+  for c in "$@"; do
+    if ! command -v "$c" >/dev/null 2>&1; then
+      echo "missing required tool: $c" >&2
+      exit 1
+    fi
+  done
+}
+
+# install the setup.py build toolchain (setuptools-rust) if it is missing.
+ensure_build_deps() {
+  if ! python -c "import setuptools_rust" >/dev/null 2>&1; then
+    pip install -q -U setuptools setuptools-rust wheel
   fi
-  [ -n "$PY" ] || { echo "no Python found; set AARONSON_PY or activate a conda env"; exit 1; }
-
-  BIN="$(cd "$(dirname "$PY")" && pwd)"
-  MATURIN="$BIN/maturin"
-  export PATH="$BIN:$PATH"   # so maturin can find cargo from the same env
-  [ -x "$MATURIN" ] || "$PY" -m pip install -q -U maturin
 }
 
-develop() {
-  resolve_py;
-  ( cd "$ROOT" && "$MATURIN" develop );
-}
-build() {
-  resolve_py;
-  ( cd "$ROOT" && "$MATURIN" build --release --sdist );
+# read the PyPI token.
+tok() {
+  local file="./.vscode/token.env"
+
+  if [ ! -f "$file" ]; then
+    echo "token file not found: $file" >&2
+    exit 1
+  fi
+
+  cat "$file"
 }
 
+# run every *.py in a dir (skips MDR.py, obviously); soft mode never fails the build.
 run_dir() {
-  local dir="$1" mode="$2" rc=0
+  local dir="$1"
+  local mode="$2"
+  local rc=0
+
   for f in "$dir"/*.py; do
     [ -e "$f" ] || continue
-    case "$f" in */MDR.py) continue;; esac
-    echo "-- $(basename "$f")"
 
-    if ! "$PY" "$f";
-     then [ "$mode" = soft ] || rc=1;
+    case "$f" in
+      */MDR.py) continue ;;
+    esac
+
+    echo "-- $(basename "$f")"
+    if ! python "$f"; then
+      [ "$mode" = soft ] || rc=1
     fi
   done
 
   return $rc
 }
 
+# compile core
+develop() {
+  has python cargo rustc
+  ensure_build_deps
+  cd "$ROOT"
+  python setup.py build_ext --inplace
+}
+
+build() {
+  has python cargo rustc
+  ensure_build_deps
+  cd "$ROOT"
+  rm -rf build dist aaronson.egg-info
+  python setup.py sdist bdist_wheel
+}
+
 test_() {
-  develop;
-  run_dir "$ROOT/test" hard;
+  develop
+  run_dir "$ROOT/test" hard
 }
 
 bench() {
-  develop;
-  "$PY" -m pip install -q stim pymatching || true; run_dir "$ROOT/base" soft;
+  develop
+  pip install -q stim pymatching || true
+  run_dir "$ROOT/base" soft
 }
 
 deploy() {
   build
-  "$PY" -m pip install -q twine
-  "$BIN/twine" check "$ROOT"/target/wheels/*
-  local tokfile="${TOKEN_FILE:-$ROOT/.token.env}"
+  pip install -q twine
+  twine check "$ROOT"/dist/*
 
-  [ -f "$tokfile" ] || { echo "no PyPI token file at $tokfile"; exit 1; }
-  "$BIN/twine" upload "$ROOT"/target/wheels/* -u __token__ -p "$(cat "$tokfile")"
+  local tokval
+  tokval="$(tok)"
+  twine upload "$ROOT"/dist/* -u __token__ -p "$tokval"
 }
 
 lint() {
-  resolve_py;
+  has python
+  cd "$ROOT"
+
   if [ "${1:-}" = "--fix" ] || [ "${1:-}" = "fix" ]; then
-    ( cd "$ROOT" && "$PY" -m view.lint --fix && "$PY" -m black -q python/aaronson test view );
+    python -m view.lint --fix
+    python -m black -q aaronson test view
   else
-    ( cd "$ROOT" && "$PY" -m view.lint && "$PY" -m black --check -q python/aaronson test view );
+    python -m view.lint
+    python -m black --check -q aaronson test view
   fi
-  # eastwood as a secondary style check on the shipped library; view.lint above wins on conflict.
-  if command -v eastwood >/dev/null 2>&1; then ( cd "$ROOT" && eastwood -lang python python/aaronson ); fi
+
+  if command -v eastwood >/dev/null 2>&1; then
+    eastwood -lang python aaronson
+  fi
 }
 
 docs() {
-  resolve_py;
+  cd "$ROOT/docs"
+
   case "${1:-build}" in
-    dev)   ( cd "$ROOT/docs" && npm install && npm run docs:dev ) ;;
-    build) ( cd "$ROOT/docs" && npm install && npm run docs:build ) ;;
-    test)  MDR_OUT="$ROOT/docs/tests" test_ ;;
-    *) echo "usage: ./do docs {dev|build|test}"; exit 1 ;;
+    dev)
+      has npm
+      npm run dev
+      ;;
+    build)
+      has npm
+      npm run build
+      ;;
+    test)
+      MDR_OUT="$ROOT/docs/tests" test_
+      ;;
+    *)
+      echo "usage: ./do docs {dev|build|test}" >&2
+      exit 1
+      ;;
   esac
 }
 
@@ -94,5 +141,8 @@ case "${1:-}" in
   deploy)  deploy ;;
   lint)    shift; lint "$@" ;;
   docs)    shift; docs "$@" ;;
-  *) echo "usage: ./do {develop|build|test|bench|deploy|lint|docs}"; exit 1 ;;
+  *)
+    echo "usage: ./do {develop|build|test|bench|deploy|lint|docs}" >&2
+    exit 1
+    ;;
 esac

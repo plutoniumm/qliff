@@ -4,8 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Small seedable PRNG (splitmix64) for measurement coin flips. Kept inline so
-/// the core has no external dependency and is fully reproducible from a seed.
+// splitmix64: Someone has to check this. Its whole
+// ass AI generated, and Ive not even looked at it
 #[derive(Clone)]
 struct Rng {
     s: u64,
@@ -28,39 +28,70 @@ impl Rng {
     }
 }
 
-/// CHP phase function g: the power of i picked up when left-multiplying the
-/// Pauli (x1,z1) onto (x2,z2). See Aaronson & Gottesman (2004).
+// g = power of i when (x1,z1) * (x2,z2).
+// Encoding I=(0,0) X=(1,0) Z=(0,1) Y=(1,1); e ∈ {-1,0,+1}:
+//   P1=I -> 0
+//   P1=X -> z2*(2*x2-1)   = +1 if P2=Y, -1 if P2=Z, else 0
+//   P1=Z -> x2*(1-2*z2)   = +1 if P2=X, -1 if P2=Y, else 0
+//   P1=Y -> z2 - x2       = +1 if P2=Z, -1 if P2=X, else 0
 #[inline]
 fn g(x1: bool, z1: bool, x2: bool, z2: bool) -> i32 {
     match (x1, z1) {
-        (false, false) => 0,
-        (true, true) => (z2 as i32) - (x2 as i32),
-        (true, false) => (z2 as i32) * (2 * (x2 as i32) - 1),
-        (false, true) => (x2 as i32) * (1 - 2 * (z2 as i32)),
+        (false, false) => 0,                                   // I
+        (true, false) => (z2 as i32) * (2 * (x2 as i32) - 1),  // X
+        (false, true) => (x2 as i32) * (1 - 2 * (z2 as i32)),  // Z
+        (true, true) => (z2 as i32) - (x2 as i32),             // Y
     }
 }
 
-/// CHP stabilizer tableau (Aaronson-Gottesman). Rows `0..n` are destabilizer
-/// generators, `n..2n` stabilizer generators, and row `2n` is scratch space
-/// used during deterministic measurement. Each row stores its X and Z bits
-/// packed into `w = ceil(n/64)` u64 words plus a sign bit.
+// NOTE: in the tableu we will start with |00> in all instances because that makes dealing with ZZ easy.
+
+// CNOT-Hadamard-Phase tableau (Aaronson-Gottesman)
+//   0..N    destabilizers
+//   N..2N   stabilizers
+//   2N      scratch (for measurement stuff)
 #[pyclass]
 #[derive(Clone)]
 pub struct Tableau {
     nq: usize,
+    // ceil(n/64): u64 words packed per row
     w: usize,
+    // row r qubit j ->
+    // word (j>>6) [from j//64] and
+    //  bit (j&63) [from j% 64]
     xs: Vec<u64>,
     zs: Vec<u64>,
+    // per-row phase: 0 => +, 1 => -
     signs: Vec<u8>,
+    // measurement outcomes, in call order
     record: Vec<bool>,
     rng: Rng,
 }
 
+/*
+Each row is actually
+- X[stuff]
+- Z[stuff]
+- r[stuff]
+
+but in fact gets packed to a single row as [x1...xn, z1...zn, r1...rn]. An example for |00> but with Vec<u8> packing would be
+
+       x         z         r   Pauli
+row 0  00000001  00000000  +   X₀      ← destab
+row 1  00000010  00000000  +   X₁      ← destab
+row 2  00000000  00000001  +   Z₀      ← stab  ┐ stabilized by +Z₀, +Z₁
+row 3  00000000  00000010  +   Z₁      ← stab  ┘ ⇒ |00⟩
+row 4  00000000  00000000  +   I
+
+But the plus and minus here would be stored as bits.
+*/
 impl Tableau {
     #[inline]
+    // I will not apologise for doing unhinged things
     fn get_x(&self, i: usize, j: usize) -> bool {
         (self.xs[i * self.w + (j >> 6)] >> (j & 63)) & 1 == 1
     }
+
     #[inline]
     fn get_z(&self, i: usize, j: usize) -> bool {
         (self.zs[i * self.w + (j >> 6)] >> (j & 63)) & 1 == 1
@@ -69,6 +100,7 @@ impl Tableau {
     fn set_z(&mut self, i: usize, j: usize, v: bool) {
         let id = i * self.w + (j >> 6);
         let m = 1u64 << (j & 63);
+
         if v {
             self.zs[id] |= m;
         } else {
@@ -81,6 +113,7 @@ impl Tableau {
             self.xs[r * self.w + k] = 0;
             self.zs[r * self.w + k] = 0;
         }
+
         self.signs[r] = 0;
     }
 
@@ -88,19 +121,40 @@ impl Tableau {
         for k in 0..self.w {
             let xv = self.xs[src * self.w + k];
             let zv = self.zs[src * self.w + k];
+
             self.xs[dst * self.w + k] = xv;
             self.zs[dst * self.w + k] = zv;
         }
         self.signs[dst] = self.signs[src];
     }
 
-    /// row h <- row h * row i, tracking the sign exactly.
+    /*
+    OLD SHIT COMMENT
+    // rowsum(h,i): row_h <- row_i . row_h  (Pauli-group product)
+    //   e = 2*r_i + 2*r_h + Σ_j g(row_i[j], row_h[j])    // total phase is i^e
+    //   r_h <- (e mod 4 == 2) ? 1 : 0                     // e is always 0 or 2 here
+    //   x_h ^= x_i ;  z_h ^= z_i
+    */
+
+    // row h <- row i * row h
     fn rowsum(&mut self, h: usize, i: usize) {
         let mut sum: i64 = 2 * (self.signs[h] as i64) + 2 * (self.signs[i] as i64);
         for j in 0..self.nq {
-            sum += g(self.get_x(i, j), self.get_z(i, j), self.get_x(h, j), self.get_z(h, j)) as i64;
+            sum += g(
+                self.get_x(i, j),
+                self.get_z(i, j),
+                self.get_x(h, j),
+                self.get_z(h, j)
+            ) as i64;
         }
-        self.signs[h] = if sum.rem_euclid(4) == 0 { 0 } else { 1 };
+
+        self.signs[h] =
+            if sum.rem_euclid(4) == 0 {
+                 0
+            } else {
+                1
+            };
+
         for k in 0..self.w {
             let xv = self.xs[i * self.w + k];
             let zv = self.zs[i * self.w + k];
@@ -109,6 +163,12 @@ impl Tableau {
         }
     }
 
+    // measure Z_a  (force pins the random coin):
+    //   ∃ stab row p in N..2N with x_{p,a}=1  (Z_a anticommutes -> random):
+    //     rowsum(row, p) for every other row hitting a   // leave p the lone anticommuter
+    //     destab_p <- stab_p ;  stab_p <- (-1)^coin Z_a ;  return coin
+    //   else  (Z_a commutes with all -> deterministic):
+    //     scratch <- Π stab_k over destabs k that hit a ;  return sign(scratch)
     fn do_measure(&mut self, a: usize, force: Option<bool>) -> bool {
         let n = self.nq;
         let mut p = None;
@@ -119,7 +179,6 @@ impl Tableau {
             }
         }
         match p {
-            // random outcome: a stabilizer anticommutes with Z_a
             Some(p) => {
                 for ii in 0..2 * n {
                     if ii != p && self.get_x(ii, a) {
@@ -136,7 +195,6 @@ impl Tableau {
                 self.signs[p] = bit as u8;
                 bit
             }
-            // deterministic outcome: accumulate into the scratch row
             None => {
                 let sc = 2 * n;
                 self.zero_row(sc);
@@ -150,7 +208,7 @@ impl Tableau {
         }
     }
 
-    /// Whether row `r` anticommutes with the Pauli (X bits `px`, Z bits `pz`).
+    // symplectic product of row r with Pauli (px,pz); 1 => they anticommute
     fn anticommutes(&self, r: usize, px: &[u8], pz: &[u8]) -> bool {
         let mut sp = 0u8;
         for j in 0..self.nq {
@@ -159,7 +217,7 @@ impl Tableau {
         sp & 1 == 1
     }
 
-    /// Overwrite row `r` with the (unsigned) Pauli given by `px`, `pz`.
+    // overwrite row r with the unsigned Pauli (px,pz)
     fn set_row_pauli(&mut self, r: usize, px: &[u8], pz: &[u8]) {
         self.zero_row(r);
         for j in 0..self.nq {
@@ -186,6 +244,7 @@ impl Tableau {
     fn new(n: usize, seed: Option<u64>) -> Self {
         let w = (n + 63) / 64;
         let rows = 2 * n + 1;
+        // default seed: wall-clock nanos XOR a per-process counter (unique per Tableau)
         let seed = seed.unwrap_or_else(|| {
             let nanos = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -203,8 +262,8 @@ impl Tableau {
             record: Vec::new(),
             rng: Rng::new(seed),
         };
+        // |0...0>: destabilizer i = X_i, stabilizer i = Z_i
         for i in 0..n {
-            // destabilizer i = X_i, stabilizer n+i = Z_i  (state |0...0>)
             t.xs[i * w + (i >> 6)] |= 1u64 << (i & 63);
             t.zs[(n + i) * w + (i >> 6)] |= 1u64 << (i & 63);
         }
@@ -216,6 +275,7 @@ impl Tableau {
         self.nq
     }
 
+    // H: swap x<->z; sign ^= x & z
     fn h(&mut self, a: usize) {
         let wa = a >> 6;
         let sh = a & 63;
@@ -230,6 +290,7 @@ impl Tableau {
         }
     }
 
+    // S: z ^= x; sign ^= x & z
     fn s(&mut self, a: usize) {
         let wa = a >> 6;
         let sh = a & 63;
@@ -242,6 +303,7 @@ impl Tableau {
         }
     }
 
+    // S-dagger: z ^= x; sign ^= x & !z
     fn s_dag(&mut self, a: usize) {
         let wa = a >> 6;
         let sh = a & 63;
@@ -254,6 +316,7 @@ impl Tableau {
         }
     }
 
+    // X: sign ^= z
     fn x(&mut self, a: usize) {
         let wa = a >> 6;
         let sh = a & 63;
@@ -263,6 +326,7 @@ impl Tableau {
         }
     }
 
+    // Z: sign ^= x
     fn z(&mut self, a: usize) {
         let wa = a >> 6;
         let sh = a & 63;
@@ -272,6 +336,7 @@ impl Tableau {
         }
     }
 
+    // Y: sign ^= x ^ z
     fn y(&mut self, a: usize) {
         let wa = a >> 6;
         let sh = a & 63;
@@ -283,6 +348,7 @@ impl Tableau {
         }
     }
 
+    // CNOT a->b: x_b ^= x_a, z_a ^= z_b; sign ^= x_a & z_b & (x_b ^ z_a ^ 1)
     fn cx(&mut self, a: usize, b: usize) {
         let wa = a >> 6;
         let sa = a & 63;
@@ -301,18 +367,21 @@ impl Tableau {
         }
     }
 
+    // CZ = H on b, CX(a,b), H on b
     fn cz(&mut self, a: usize, b: usize) {
         self.h(b);
         self.cx(a, b);
         self.h(b);
     }
 
+    // SWAP = CX(a,b), CX(b,a), CX(a,b)
     fn swap(&mut self, a: usize, b: usize) {
         self.cx(a, b);
         self.cx(b, a);
         self.cx(a, b);
     }
 
+    // measure qubit a (force pins the coin); appends the outcome to the record
     #[pyo3(signature = (a, force=None))]
     fn measure(&mut self, a: usize, force: Option<bool>) -> bool {
         let o = self.do_measure(a, force);
@@ -320,6 +389,7 @@ impl Tableau {
         o
     }
 
+    // measure, then reset qubit a to |0>
     fn mr(&mut self, a: usize) -> bool {
         let o = self.do_measure(a, None);
         self.record.push(o);
@@ -329,6 +399,7 @@ impl Tableau {
         o
     }
 
+    // collapse qubit a and force it to |0>
     fn reset(&mut self, a: usize) {
         if self.do_measure(a, None) {
             self.x(a);
@@ -352,12 +423,12 @@ impl Tableau {
         (0..self.nq).map(|i| self.row_tuple(i)).collect()
     }
 
-    /// Expectation <P> of a Pauli P (X bits `px`, Z bits `pz`, each length n)
-    /// on the current stabilizer state: 0 if P anticommutes with the stabilizer
-    /// group, else +1 or -1. Read-only.
+    // <P> for Pauli (px,pz):
+    //   P anticommutes with any stabilizer        -> 0   (P ∉ stabilizer group)
+    //   else  P = ± Π stab_k over destabs k that anticommute with P
+    //         rebuild that product in scratch (sx,sz,ssign); return its sign as ±1
     fn expectation(&self, px: Vec<u8>, pz: Vec<u8>) -> i8 {
         let n = self.nq;
-        // If P anticommutes with any stabilizer generator, <P> = 0.
         for k in n..2 * n {
             let mut sp = 0u8;
             for j in 0..n {
@@ -367,9 +438,6 @@ impl Tableau {
                 return 0;
             }
         }
-        // Otherwise +-P is in the group; recover the sign by multiplying the
-        // stabilizers selected by the anticommuting destabilizers into a local
-        // scratch row, tracking phase exactly (same rule as `rowsum`).
         let mut sx = vec![0u64; self.w];
         let mut sz = vec![0u64; self.w];
         let mut ssign: i64 = 0;
@@ -400,11 +468,7 @@ impl Tableau {
         }
     }
 
-    /// Measure an arbitrary Pauli (X bits `px`, Z bits `pz`); returns
-    /// `(outcome, was_random)` with `outcome` true for the -1 eigenvalue. `force`
-    /// pins a random outcome to project onto a chosen eigenspace (e.g. fidelity).
-    /// Same anticommutation/rowsum elimination as single-qubit measurement, but
-    /// the test is the full symplectic product with P.
+    // measure an arbitrary Pauli (px,pz) like do_measure; returns (outcome, was_random)
     #[pyo3(signature = (px, pz, force=None))]
     fn measure_pauli(&mut self, px: Vec<u8>, pz: Vec<u8>, force: Option<bool>) -> (bool, bool) {
         let n = self.nq;

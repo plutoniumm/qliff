@@ -70,7 +70,7 @@ the labels. `logical_fidelity(predictions, observed)` returns $1 - \text{LER}$.
 dem = rep.dem()
 H, priors, obs_matrix = dem.check_matrix()
 
-matching = pymatching.Matching.from_check_matrix(
+matching = Matching.from_check_matrix(
     H, weights=dem.weights(), faults_matrix=obs_matrix
 )
 
@@ -80,7 +80,7 @@ fidelity = logical_fidelity(predicted, obs)   # 1 - logical error rate
 ```
 
 ```python [imports]
-import pymatching
+from pymatching import Matching
 from aaronson.qec import repetition_code, logical_fidelity
 
 rep = repetition_code(distance=3, rounds=3, p=0.05)

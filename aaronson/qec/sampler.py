@@ -8,11 +8,9 @@ from ..simulator import CLIFFORD_OPS, Simulator
 
 class DetectorSampler:
     """
-    Sample detection events and logical-observable flips from a noisy circuit.
-
-    A detection event is a detector's measured parity XORed with its noiseless
-    value. Uses Pauli-noise trajectories; coherent channels raise here (estimate
-    those logical error rates with the importance sampler instead).
+    Sample detection events and observable flips from a noisy circuit. A detection
+    event is a detector's measured parity XORed with its noiseless value. Pauli-noise
+    trajectories only -- coherent channels raise; use the importance sampler.
     """
 
     def __init__(self, circuit):
@@ -46,8 +44,8 @@ class DetectorSampler:
 
     def sample(self, shots, seed=None):
         """
-        Return ``(detection_events, observable_flips)`` as uint8 arrays of shape
-        ``(shots, n_detectors)`` and ``(shots, n_observables)``.
+        Return (detection_events, observable_flips) as uint8 arrays of shape
+        (shots, n_detectors) and (shots, n_observables).
         """
         rng = random.Random(seed)
         dets = np.zeros((shots, len(self.circuit.detectors)), dtype=np.uint8)

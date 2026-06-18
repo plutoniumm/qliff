@@ -5,14 +5,11 @@ from ..circuit import Circuit
 
 def repetition_code(distance, rounds, p):
     """
-    Build a bit-flip repetition-code memory experiment as a Circuit.
-
-    ``distance`` data qubits hold one logical bit; ``distance - 1`` ancillas
-    measure neighbouring Z parities each round via CX gates and ``MR``. Each data
-    qubit suffers an X error with probability ``p`` per round. Detectors compare
-    each ancilla to its previous round (and the first round to zero); a final
-    round of data ``M`` seeds boundary detectors plus the logical-Z observable
-    spanning all data qubits.
+    Bit-flip repetition-code memory experiment: distance data + distance-1
+    ancillas, rounds rounds, per-round X error p on each data qubit. Ancillas
+    measure adjacent Z parities (CX + MR); detectors compare each ancilla round-to-
+    round (first round vs zero); final data M seeds boundary detectors and the
+    logical-Z observable.
     """
     c = Circuit()
     data = list(range(distance))
@@ -41,13 +38,10 @@ def repetition_code(distance, rounds, p):
 
 def _qubit_grid(distance):
     """
-    Map rotated-surface-code coordinates to qubit indices.
-
-    Data qubits sit on integer ``(row, col)`` sites with ``0 <= row, col <
-    distance``; measure qubits sit on the half-integer plaquette centres. Returns
-    ``(data, plaq)`` where ``data[(r, c)]`` is a qubit index and ``plaq`` lists
-    ``(kind, r, c, neighbours)`` tuples for each stabilizer, ``kind`` in
-    ``{"X", "Z"}`` and ``neighbours`` the data qubits it touches.
+    Map rotated-surface-code sites to qubit indices. Data qubits fill the
+    distance x distance integer grid; stabilizer ancillas sit on plaquette
+    centres. Returns (data, plaq): data[(r, c)] -> qubit index, and plaq a
+    list of (kind, anc_index, touched_data) with kind in {"X", "Z"}.
     """
     data = {}
     for r in range(distance):
@@ -77,19 +71,14 @@ def _qubit_grid(distance):
 
 def rotated_surface_code(distance, rounds, p):
     """
-    Build a rotated planar surface-code Z-memory experiment as a Circuit.
+    Rotated planar surface-code Z-memory experiment.
 
-    Data qubits form a ``distance x distance`` grid; X- and Z-type stabilizers
-    tile the plaquettes in the rotated checkerboard, weight-4 in the bulk and
-    weight-2 on the boundaries. The logical qubit starts in ``|0>``: each round
-    measures every stabilizer with an ancilla (H-conjugated CX schedule for X
-    checks, plain CX for Z checks) and resets it with ``MR``. Circuit-level
-    DEPOLARIZE1 noise of strength ``p`` hits every data qubit each round. Only the
-    Z-type stabilizers -- which are deterministic for a Z-basis memory -- declare
-    detectors comparing consecutive rounds, so the detector graph stays graphlike
-    (X and Y data faults enter through their X-component alone). The final data
-    ``M`` seeds boundary Z detectors and the logical-Z observable along one
-    column.
+    distance x distance data grid with X/Z plaquette stabilizers (weight-4 bulk,
+    weight-2 boundary). Logical |0>; each round measures every stabilizer (H-
+    conjugated CX for X checks, plain CX for Z) with MR and applies DEPOLARIZE1
+    p to every data qubit. Only Z stabilizers -- deterministic in a Z-basis
+    memory -- declare round-to-round detectors, keeping the graph graphlike. Final
+    data M seeds boundary Z detectors and the logical-Z observable along a column.
     """
     data, plaq = _qubit_grid(distance)
     z_checks = [pq for pq in plaq if pq[0] == "Z"]
@@ -131,11 +120,9 @@ def rotated_surface_code(distance, rounds, p):
 
 def logical_fidelity(predictions, observed):
     """
-    Return logical fidelity ``1 - mean(predictions != observed)``.
-
-    ``predictions`` and ``observed`` are arrays of decoded vs true observable
-    flips; a row counts as an error if any observable disagrees. The complement
-    of the logical error rate.
+    Logical fidelity 1 - mean(prediction != observed) (complement of the logical
+    error rate). Arrays of decoded vs true observable flips; a row errs if any column
+    disagrees.
     """
     predictions = np.asarray(predictions)
     observed = np.asarray(observed)

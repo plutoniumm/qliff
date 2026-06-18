@@ -11,13 +11,10 @@ _AXIS_WRAP = {
 
 class Channel(ABC):
     """
-    A noise channel decomposed into stabilizer-channel branches.
-
-    A branch is ``(weight, ops)`` with ``ops`` a list of ``(gate, targets)``.
-    Pauli channels use probabilities (non-negative, summing to 1). General
-    channels use real quasiprobabilities that may be negative and whose absolute
-    values sum to ``gamma >= 1``; importance samplers reweight each trajectory by
-    ``sign(weight) * gamma``.
+    A noise channel as stabilizer-channel branches (weight, ops), with ops a
+    list of (gate, targets). Pauli channels: probabilities >= 0 summing to 1.
+    General channels: real quasiprobabilities (may be < 0), |.| summing to
+    gamma >= 1; samplers reweight a trajectory by sign(weight) * gamma.
     """
 
     is_pauli = True
@@ -25,14 +22,14 @@ class Channel(ABC):
     @abstractmethod
     def branches(self, targets):
         """
-        Return the ``(weight, ops)`` branches for the given target qubits, with
+        Return the (weight, ops) branches for the given target qubits, with
         the identity (no-fault) branch first.
         """
 
     def sample(self, targets, rng):
         """
-        Sample one branch as ``(importance_weight, ops)``: a branch is drawn with
-        probability ``|weight| / gamma`` and weighted by ``sign(weight) * gamma``.
+        Draw one branch with probability |weight| / gamma; return
+        (sign(weight) * gamma, ops) -- the importance weight and its gates.
         """
         branches = self.branches(targets)
         gamma = sum(abs(w) for w, _ in branches)
@@ -98,8 +95,8 @@ class PauliChannel2(Channel):
 
 class PauliRotation(Channel):
     """
-    Coherent single-qubit rotation ``exp(-i theta P / 2)`` as a quasiprobability
-    mixture over ``{I, Z, S, S_DAG}`` (Z axis) or that mixture wrapped in
+    Coherent single-qubit rotation exp(-i theta P / 2) as a quasiprobability
+    mixture over {I, Z, S, S_DAG} (Z axis) or that mixture wrapped in
     Hadamards (X axis). Not a Pauli channel; drive it with an importance sampler.
     """
 
@@ -136,11 +133,11 @@ class PauliRotation(Channel):
 
 class AmplitudeDamping(Channel):
     """
-    Amplitude-damping channel with damping probability ``p`` (arXiv:2512.07304).
+    Amplitude-damping channel with damping probability p (arXiv:2512.07304).
 
-    Decomposes exactly over ``{I, Z, reset-to-|0>}`` with weights ``q_I, q_Z,
-    q_R`` where ``q_I = [(1-p)+sqrt(1-p)]/2``, ``q_Z = [(1-p)-sqrt(1-p)]/2`` (<0)
-    and ``q_R = p``. Sampling overhead ``gamma = [(1+p)-sqrt(1-p)]/2 ~ 3p/4`` with
+    Decomposes exactly over {I, Z, reset-to-|0>} with weights q_I, q_Z,
+    q_R where q_I = [(1-p)+sqrt(1-p)]/2, q_Z = [(1-p)-sqrt(1-p)]/2 (<0)
+    and q_R = p. Sampling overhead gamma = [(1+p)-sqrt(1-p)]/2 ~ 3p/4 with
     negativity 1/3 -- nonunitary, so nearly as cheap as Pauli noise. Not a Pauli
     channel; use an importance sampler.
     """
@@ -205,9 +202,9 @@ NOISE_FACTORIES = {
 
 def make_channel(name, arg):
     """
-    Build the noise channel for instruction ``name``, or return ``arg`` unchanged
-    when it is already a :class:`Channel` (a custom channel added via
-    ``Circuit.noise``).
+    Build the noise channel for instruction name, or return arg unchanged
+    when it is already a Channel (a custom channel added via
+    Circuit.noise).
     """
     if isinstance(arg, Channel):
         return arg

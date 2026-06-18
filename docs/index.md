@@ -27,6 +27,6 @@ features:
     details: "Detectors, observables, detector error models and ready-made repetition / rotated surface codes that drop straight into MWPM, BP or ML decoders. No decoder bundled."
     icon: "&#x1F6E1;"
   - title: "Native core, Python surface"
-    details: "The tableau lives in a Rust crate exposed through PyO3/maturin, so the hot path is compiled while every extension seam stays Pythonic."
+    details: "The tableau lives in a Rust crate exposed through PyO3, so the hot path is compiled while every extension seam stays Pythonic."
     icon: "&#x1F680;"
 ---
