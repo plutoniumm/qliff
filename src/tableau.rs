@@ -1212,37 +1212,27 @@ impl ColTableau {
     // coin), so CompiledSampler computes it ONCE and reuses it across sample()
     // calls -- amortizing this serial pass over a whole LER sweep.
     fn frame_reference(&self, instrs: Vec<(u8, u32, u32, u32)>) -> Option<Vec<bool>> {
-        let mut refsim = RowTableau::new(self.nq, Some(0));
+        // Run on the COLUMN-MAJOR engine: gate replay is ~20x faster than the old
+        // row-major RowTableau path (the cache cliff we fixed for interactive
+        // gates). Only the measurements transpose to the row engine (`inner`).
+        let mut refsim = ColTableau::new(self.nq, Some(0));
         let mut ref_bits: Vec<bool> = Vec::new();
         for &(kind, x, y, z) in &instrs {
             match kind {
-                0 => {
-                    let (a, b) = (y as usize, z as usize);
-                    match x {
-                        0 => refsim.h(a),
-                        1 => refsim.s(a),
-                        2 => refsim.s_dag(a),
-                        3 => refsim.x(a),
-                        4 => refsim.y(a),
-                        5 => refsim.z(a),
-                        6 => refsim.cx(a, b),
-                        7 => refsim.cz(a, b),
-                        8 => refsim.swap(a, b),
-                        _ => {}
-                    }
-                }
+                0 => refsim.apply_gate(x as u8, y as usize, z as usize),
                 1 => {
                     let a = y as usize;
                     if x == 2 {
                         refsim.reset(a); // R: no record, randomness discarded
                     } else {
-                        let (bit, random) = refsim.do_measure(a, None);
+                        refsim.to_row();
+                        let (bit, random) = refsim.inner.do_measure(a, None);
                         if random {
                             return None; // fall back to sample_batch
                         }
                         ref_bits.push(bit);
                         if x == 1 && bit {
-                            refsim.x(a); // MR: reset to |0>
+                            refsim.inner.x(a); // MR: reset to |0>
                         }
                     }
                 }
