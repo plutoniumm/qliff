@@ -195,7 +195,9 @@ impl RowTableau {
         }
     }
 
-    fn do_measure(&mut self, a: usize, force: Option<bool>) -> bool {
+    // returns (outcome, was_random): was_random = true if the measured qubit
+    // anticommuted with a stabilizer (a genuine coin flip) vs a fixed outcome.
+    fn do_measure(&mut self, a: usize, force: Option<bool>) -> (bool, bool) {
         let n = self.nq;
         let mut p = None;
         for k in n..2 * n {
@@ -219,7 +221,7 @@ impl RowTableau {
                     None => self.rng.next_bool(),
                 };
                 self.signs[p] = bit as u8;
-                bit
+                (bit, true)
             }
             None => {
                 let sc = 2 * n;
@@ -229,7 +231,7 @@ impl RowTableau {
                         self.rowsum(sc, ii + n);
                     }
                 }
-                self.signs[sc] != 0
+                (self.signs[sc] != 0, false)
             }
         }
     }
@@ -422,14 +424,14 @@ impl RowTableau {
 
     #[pyo3(signature = (a, force=None))]
     fn measure(&mut self, a: usize, force: Option<bool>) -> bool {
-        let o = self.do_measure(a, force);
+        let o = self.do_measure(a, force).0;
         self.record.push(o);
         o
     }
 
     // measure, then reset qubit a to |0>
     fn mr(&mut self, a: usize) -> bool {
-        let o = self.do_measure(a, None);
+        let o = self.do_measure(a, None).0;
         self.record.push(o);
         if o {
             self.x(a);
@@ -439,7 +441,7 @@ impl RowTableau {
 
     // collapse qubit a and force it to |0>
     fn reset(&mut self, a: usize) {
-        if self.do_measure(a, None) {
+        if self.do_measure(a, None).0 {
             self.x(a);
         }
     }
@@ -977,6 +979,183 @@ impl ColTableau {
             out.push(rec);
         }
         out
+    }
+
+    // Pauli-frame batch sampler -- the fast path when every measurement is
+    // DETERMINISTIC in the noiseless reference. Returns None (caller falls back
+    // to sample_batch) if any measurement is random: a genuine per-shot coin the
+    // frame method doesn't model. Otherwise: run the reference once (fixes the
+    // outcomes), then propagate bit-packed Pauli frames over `shots` shots (64
+    // shots / u64 word, sign-free), sampling noise as frame-bit flips; a
+    // measurement records ref_bit XOR frame_x[q] for all shots at once. The
+    // per-shot tableau re-run is gone -> the Wall-2 fix.
+    fn frame_sample(
+        &self,
+        instrs: Vec<(u8, u32, u32, u32)>,
+        branches: Vec<Vec<(f64, Vec<(u8, u32, u32)>)>>,
+        shots: usize,
+        seed: u64,
+    ) -> Option<Vec<Vec<i64>>> {
+        let n = self.nq;
+
+        // --- reference run (noiseless): record ref bits, bail if any is random ---
+        let mut refsim = RowTableau::new(n, Some(seed));
+        let mut ref_bits: Vec<bool> = Vec::new();
+        for &(kind, x, y, z) in &instrs {
+            match kind {
+                0 => {
+                    let (a, b) = (y as usize, z as usize);
+                    match x {
+                        0 => refsim.h(a),
+                        1 => refsim.s(a),
+                        2 => refsim.s_dag(a),
+                        3 => refsim.x(a),
+                        4 => refsim.y(a),
+                        5 => refsim.z(a),
+                        6 => refsim.cx(a, b),
+                        7 => refsim.cz(a, b),
+                        8 => refsim.swap(a, b),
+                        _ => {}
+                    }
+                }
+                1 => {
+                    let a = y as usize;
+                    if x == 2 {
+                        refsim.reset(a); // R: no record, randomness discarded
+                    } else {
+                        let (bit, random) = refsim.do_measure(a, None);
+                        if random {
+                            return None; // fall back to sample_batch
+                        }
+                        ref_bits.push(bit);
+                        if x == 1 && bit {
+                            refsim.x(a); // MR: reset to |0>
+                        }
+                    }
+                }
+                _ => {} // kind 2 = noise: skipped in the reference
+            }
+        }
+
+        // --- frame engine: bit-packed over shots (64 shots per u64 word) ---
+        let sw = (shots + 63) / 64;
+        let mut fx = vec![0u64; n * sw];
+        let mut fz = vec![0u64; n * sw];
+        let mut noise = Rng::new(seed.wrapping_add(0x9E37_79B9_7F4A_7C15));
+        let mut meas_planes: Vec<Vec<u64>> = Vec::new();
+        let mut mi = 0usize;
+
+        for &(kind, x, y, z) in &instrs {
+            match kind {
+                0 => {
+                    let (fa, fb) = ((y as usize) * sw, (z as usize) * sw);
+                    match x {
+                        0 => {
+                            for k in 0..sw {
+                                let t = fx[fa + k];
+                                fx[fa + k] = fz[fa + k];
+                                fz[fa + k] = t;
+                            }
+                        }
+                        1 | 2 => {
+                            for k in 0..sw {
+                                fz[fa + k] ^= fx[fa + k];
+                            }
+                        }
+                        3 | 4 | 5 => {} // X/Y/Z: identity on the (sign-free) frame
+                        6 => {
+                            for k in 0..sw {
+                                let fxa = fx[fa + k];
+                                let fzb = fz[fb + k];
+                                fx[fb + k] ^= fxa;
+                                fz[fa + k] ^= fzb;
+                            }
+                        }
+                        7 => {
+                            for k in 0..sw {
+                                let fxa = fx[fa + k];
+                                let fxb = fx[fb + k];
+                                fz[fa + k] ^= fxb;
+                                fz[fb + k] ^= fxa;
+                            }
+                        }
+                        8 => {
+                            for k in 0..sw {
+                                fx.swap(fa + k, fb + k);
+                                fz.swap(fa + k, fb + k);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                1 => {
+                    let fa = (y as usize) * sw;
+                    if x == 2 {
+                        for k in 0..sw {
+                            fx[fa + k] = 0;
+                            fz[fa + k] = 0;
+                        }
+                    } else {
+                        let mask = if ref_bits[mi] { !0u64 } else { 0u64 };
+                        mi += 1;
+                        let mut plane = vec![0u64; sw];
+                        for k in 0..sw {
+                            plane[k] = fx[fa + k] ^ mask;
+                        }
+                        meas_planes.push(plane);
+                        if x == 1 {
+                            for k in 0..sw {
+                                fx[fa + k] = 0;
+                                fz[fa + k] = 0;
+                            }
+                        }
+                    }
+                }
+                2 => {
+                    let table = &branches[x as usize];
+                    let total: f64 = table.iter().map(|(w, _)| w.abs()).sum();
+                    for s in 0..shots {
+                        let thr = noise.next_f64() * total;
+                        let mut acc = 0.0;
+                        let mut pick = table.len() - 1;
+                        for (i, (w, _)) in table.iter().enumerate() {
+                            acc += w.abs();
+                            if thr <= acc {
+                                pick = i;
+                                break;
+                            }
+                        }
+                        let (word, bit) = (s >> 6, 1u64 << (s & 63));
+                        for &(op, qa, _qb) in &table[pick].1 {
+                            let fq = (qa as usize) * sw + word;
+                            match op {
+                                3 => fx[fq] ^= bit,
+                                5 => fz[fq] ^= bit,
+                                4 => {
+                                    fx[fq] ^= bit;
+                                    fz[fq] ^= bit;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // transpose measurement planes (num_meas x shots) -> shots x num_meas
+        let mut out = Vec::with_capacity(shots);
+        for s in 0..shots {
+            let (word, bit) = (s >> 6, s & 63);
+            let mut rec = Vec::with_capacity(meas_planes.len());
+            for plane in &meas_planes {
+                rec.push(((plane[word] >> bit) & 1) as i64);
+            }
+            out.push(rec);
+        }
+
+        Some(out)
     }
 
     #[pyo3(signature = (a, force=None))]

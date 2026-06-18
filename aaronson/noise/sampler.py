@@ -302,4 +302,11 @@ class CompiledSampler:
         instrs, tables = self._compiled
         rng_seed = random.Random(seed).getrandbits(64)
 
-        return self._core.sample_batch(instrs, tables, shots, rng_seed)
+        # frame sampler (bit-packed over shots) is the fast path; it returns None
+        # when a measurement is random in the noiseless reference -> per-shot
+        # tableau re-run via sample_batch.
+        out = self._core.frame_sample(instrs, tables, shots, rng_seed)
+        if out is None:
+            out = self._core.sample_batch(instrs, tables, shots, rng_seed)
+
+        return out
