@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use rayon::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -30,6 +31,179 @@ impl Rng {
     fn next_f64(&mut self) -> f64 {
         // 53-bit mantissa in [0, 1)
         (self.next_u64() >> 11) as f64 / ((1u64 << 53) as f64)
+    }
+}
+
+// Shots per parallel frame chunk. FIXED (not core-derived) so frame_sample's
+// output depends only on (seed, this constant) -- reproducible no matter how many
+// cores run it. Small enough that #chunks >> #cores for typical runs (good load
+// balance), big enough that per-chunk setup amortizes; per-chunk frame buffers
+// (n * ceil(1024/64) u64 each) stay L2-resident.
+const FRAME_CHUNK: usize = 1024;
+
+// Per-chunk noise seed: decorrelate (base, chunk) through the splitmix finalizer
+// so disjoint shot-chunks draw independent streams.
+fn chunk_seed(base: u64, chunk: u64) -> u64 {
+    let mut z = base ^ chunk.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+// One shot-chunk of the Pauli-frame engine: replay the instruction stream over
+// `chunk_shots` shots (bit-packed, 64/word), writing records into `out` (length
+// chunk_shots*num_meas, shot-major). Pure frame logic over its own buffers, so
+// disjoint chunks run in parallel; `ref_bits` (noiseless reference) is read-only.
+fn frame_chunk(
+    instrs: &[(u8, u32, u32, u32)],
+    branches: &[Vec<(f64, Vec<(u8, u32, u32)>)>],
+    ref_bits: &[bool],
+    n: usize,
+    num_meas: usize,
+    chunk_shots: usize,
+    seed: u64,
+    out: &mut [u8],
+) {
+    let sw = (chunk_shots + 63) / 64;
+    let mut fx = vec![0u64; n * sw];
+    let mut fz = vec![0u64; n * sw];
+    let mut noise = Rng::new(seed);
+    let mut meas_planes: Vec<Vec<u64>> = Vec::with_capacity(num_meas);
+    let mut mi = 0usize;
+
+    for &(kind, x, y, z) in instrs {
+        match kind {
+            0 => {
+                let (fa, fb) = ((y as usize) * sw, (z as usize) * sw);
+                match x {
+                    0 => {
+                        for k in 0..sw {
+                            let t = fx[fa + k];
+                            fx[fa + k] = fz[fa + k];
+                            fz[fa + k] = t;
+                        }
+                    }
+                    1 | 2 => {
+                        for k in 0..sw {
+                            fz[fa + k] ^= fx[fa + k];
+                        }
+                    }
+                    3 | 4 | 5 => {} // X/Y/Z: identity on the (sign-free) frame
+                    6 => {
+                        for k in 0..sw {
+                            let fxa = fx[fa + k];
+                            let fzb = fz[fb + k];
+                            fx[fb + k] ^= fxa;
+                            fz[fa + k] ^= fzb;
+                        }
+                    }
+                    7 => {
+                        for k in 0..sw {
+                            let fxa = fx[fa + k];
+                            let fxb = fx[fb + k];
+                            fz[fa + k] ^= fxb;
+                            fz[fb + k] ^= fxa;
+                        }
+                    }
+                    8 => {
+                        for k in 0..sw {
+                            fx.swap(fa + k, fb + k);
+                            fz.swap(fa + k, fb + k);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            1 => {
+                let fa = (y as usize) * sw;
+                if x == 2 {
+                    for k in 0..sw {
+                        fx[fa + k] = 0;
+                        fz[fa + k] = 0;
+                    }
+                } else {
+                    let mask = if ref_bits[mi] { !0u64 } else { 0u64 };
+                    mi += 1;
+                    let mut plane = vec![0u64; sw];
+                    for k in 0..sw {
+                        plane[k] = fx[fa + k] ^ mask;
+                    }
+                    meas_planes.push(plane);
+                    if x == 1 {
+                        for k in 0..sw {
+                            fx[fa + k] = 0;
+                            fz[fa + k] = 0;
+                        }
+                    }
+                }
+            }
+            2 => {
+                // rare-error noise: see frame_sample's serial original for the math
+                let table = &branches[x as usize];
+                let total: f64 = table.iter().map(|(w, _)| w.abs()).sum();
+                let fault_weight: f64 = table
+                    .iter()
+                    .filter(|(_, ops)| !ops.is_empty())
+                    .map(|(w, _)| w.abs())
+                    .sum();
+                if fault_weight <= 0.0 {
+                    continue;
+                }
+
+                let ln1m = (1.0 - fault_weight / total).ln();
+                let mut s = 0usize;
+                loop {
+                    let skip = if ln1m.is_finite() {
+                        ((1.0 - noise.next_f64()).ln() / ln1m) as usize
+                    } else {
+                        0
+                    };
+                    s = s.saturating_add(skip);
+                    if s >= chunk_shots {
+                        break;
+                    }
+
+                    let thr = (1.0 - noise.next_f64()) * fault_weight;
+                    let mut acc = 0.0;
+                    let mut chosen = &table[0].1;
+                    for (w, ops) in table.iter() {
+                        if ops.is_empty() {
+                            continue;
+                        }
+                        acc += w.abs();
+                        chosen = ops;
+                        if thr <= acc {
+                            break;
+                        }
+                    }
+
+                    let (word, bit) = (s >> 6, 1u64 << (s & 63));
+                    for &(op, qa, _qb) in chosen {
+                        let fq = (qa as usize) * sw + word;
+                        match op {
+                            3 => fx[fq] ^= bit,
+                            5 => fz[fq] ^= bit,
+                            4 => {
+                                fx[fq] ^= bit;
+                                fz[fq] ^= bit;
+                            }
+                            _ => {}
+                        }
+                    }
+                    s += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // transpose planes (num_meas x chunk_shots) -> shot-major bytes into `out`
+    for s in 0..chunk_shots {
+        let (word, bit) = (s >> 6, s & 63);
+        let base = s * num_meas;
+        for (m, plane) in meas_planes.iter().enumerate() {
+            out[base + m] = ((plane[word] >> bit) & 1) as u8;
+        }
     }
 }
 
@@ -1037,156 +1211,30 @@ impl ColTableau {
             }
         }
 
-        // --- frame engine: bit-packed over shots (64 shots per u64 word) ---
-        let sw = (shots + 63) / 64;
-        let mut fx = vec![0u64; n * sw];
-        let mut fz = vec![0u64; n * sw];
-        let mut noise = Rng::new(seed.wrapping_add(0x9E37_79B9_7F4A_7C15));
-        let mut meas_planes: Vec<Vec<u64>> = Vec::new();
-        let mut mi = 0usize;
-
-        for &(kind, x, y, z) in &instrs {
-            match kind {
-                0 => {
-                    let (fa, fb) = ((y as usize) * sw, (z as usize) * sw);
-                    match x {
-                        0 => {
-                            for k in 0..sw {
-                                let t = fx[fa + k];
-                                fx[fa + k] = fz[fa + k];
-                                fz[fa + k] = t;
-                            }
-                        }
-                        1 | 2 => {
-                            for k in 0..sw {
-                                fz[fa + k] ^= fx[fa + k];
-                            }
-                        }
-                        3 | 4 | 5 => {} // X/Y/Z: identity on the (sign-free) frame
-                        6 => {
-                            for k in 0..sw {
-                                let fxa = fx[fa + k];
-                                let fzb = fz[fb + k];
-                                fx[fb + k] ^= fxa;
-                                fz[fa + k] ^= fzb;
-                            }
-                        }
-                        7 => {
-                            for k in 0..sw {
-                                let fxa = fx[fa + k];
-                                let fxb = fx[fb + k];
-                                fz[fa + k] ^= fxb;
-                                fz[fb + k] ^= fxa;
-                            }
-                        }
-                        8 => {
-                            for k in 0..sw {
-                                fx.swap(fa + k, fb + k);
-                                fz.swap(fa + k, fb + k);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                1 => {
-                    let fa = (y as usize) * sw;
-                    if x == 2 {
-                        for k in 0..sw {
-                            fx[fa + k] = 0;
-                            fz[fa + k] = 0;
-                        }
-                    } else {
-                        let mask = if ref_bits[mi] { !0u64 } else { 0u64 };
-                        mi += 1;
-                        let mut plane = vec![0u64; sw];
-                        for k in 0..sw {
-                            plane[k] = fx[fa + k] ^ mask;
-                        }
-                        meas_planes.push(plane);
-                        if x == 1 {
-                            for k in 0..sw {
-                                fx[fa + k] = 0;
-                                fz[fa + k] = 0;
-                            }
-                        }
-                    }
-                }
-                2 => {
-                    // Pauli-noise location. Rather than draw a branch for every
-                    // shot, sample only the FAULTY shots via geometric gaps
-                    // (rare-error sampling, like stim): with per-shot fault prob
-                    // phi the gaps between faults are geometric, so we touch
-                    // ~phi*shots shots, not all of them -- a ~1/phi win in the
-                    // QEC regime (phi ~ 1e-3). Degrades to per-shot as phi -> 1.
-                    let table = &branches[x as usize];
-                    let total: f64 = table.iter().map(|(w, _)| w.abs()).sum();
-                    let fault_weight: f64 = table
-                        .iter()
-                        .filter(|(_, ops)| !ops.is_empty())
-                        .map(|(w, _)| w.abs())
-                        .sum();
-                    if fault_weight <= 0.0 {
-                        continue; // identity-only channel: nothing flips
-                    }
-
-                    let ln1m = (1.0 - fault_weight / total).ln(); // <=0; -inf iff phi==1
-                    let mut s = 0usize;
-                    loop {
-                        let skip = if ln1m.is_finite() {
-                            ((1.0 - noise.next_f64()).ln() / ln1m) as usize
-                        } else {
-                            0 // phi == 1: every shot faults
-                        };
-                        s = s.saturating_add(skip);
-                        if s >= shots {
-                            break;
-                        }
-
-                        // pick a fault branch ~ |weight| among non-identity ones
-                        let thr = (1.0 - noise.next_f64()) * fault_weight;
-                        let mut acc = 0.0;
-                        let mut chosen = &table[0].1;
-                        for (w, ops) in table.iter() {
-                            if ops.is_empty() {
-                                continue;
-                            }
-                            acc += w.abs();
-                            chosen = ops;
-                            if thr <= acc {
-                                break;
-                            }
-                        }
-
-                        let (word, bit) = (s >> 6, 1u64 << (s & 63));
-                        for &(op, qa, _qb) in chosen {
-                            let fq = (qa as usize) * sw + word;
-                            match op {
-                                3 => fx[fq] ^= bit,
-                                5 => fz[fq] ^= bit,
-                                4 => {
-                                    fx[fq] ^= bit;
-                                    fz[fq] ^= bit;
-                                }
-                                _ => {}
-                            }
-                        }
-                        s += 1;
-                    }
-                }
-                _ => {}
-            }
+        // --- frame engine: parallel over fixed-size shot chunks. rayon adapts to
+        // the core count; chunk size is fixed (FRAME_CHUNK) so the result is
+        // reproducible regardless of how many cores process it. ---
+        let num_meas = ref_bits.len();
+        if num_meas == 0 || shots == 0 {
+            return Some((vec![0u8; shots * num_meas], num_meas));
         }
 
-        // transpose planes (num_meas x shots) -> flat shots x num_meas bytes
-        let num_meas = meas_planes.len();
+        let noise_base = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut out = vec![0u8; shots * num_meas];
-        for s in 0..shots {
-            let (word, bit) = (s >> 6, s & 63);
-            let base = s * num_meas;
-            for (m, plane) in meas_planes.iter().enumerate() {
-                out[base + m] = ((plane[word] >> bit) & 1) as u8;
-            }
-        }
+        out.par_chunks_mut(FRAME_CHUNK * num_meas)
+            .enumerate()
+            .for_each(|(c, slice)| {
+                frame_chunk(
+                    &instrs,
+                    &branches,
+                    &ref_bits,
+                    n,
+                    num_meas,
+                    slice.len() / num_meas,
+                    chunk_seed(noise_base, c as u64),
+                    slice,
+                );
+            });
 
         Some((out, num_meas))
     }
