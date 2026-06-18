@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import random
 
+import numpy as np
+
 from .._core import ColTableau
 from .._types import Branch
 from ..circuit import Circuit
@@ -95,15 +97,16 @@ class Sampler:
 
         return instrs, tables
 
-    def sample(self, shots: int, seed: int | None = None) -> list[list[int]]:
+    def sample(self, shots: int, seed: int | None = None) -> np.ndarray:
         """
-        Run shots trajectories; one measurement record (0/1 list) per shot.
-        Pauli noise only -- a non-Pauli channel raises. Built-in Pauli noise runs
-        in the Rust batched sampler; a custom channel falls back to Python.
+        Run shots trajectories; return a uint8 (shots, measurements) array, one
+        row per shot. Pauli noise only -- a non-Pauli channel raises. Built-in
+        Pauli noise runs in the Rust batched sampler; a custom channel falls back
+        to Python.
         """
         return CompiledSampler(self.circuit).sample(shots, seed)
 
-    def _sample_python(self, shots: int, seed: int | None) -> list[list[int]]:
+    def _sample_python(self, shots: int, seed: int | None) -> np.ndarray:
         # Fallback: one tableau per shot in Python, but each Channel built once
         # (not per shot). Used when _compile can't lower the circuit.
         prepared = [
@@ -126,7 +129,7 @@ class Sampler:
                     getattr(sim, gate)(*qubits)
             out.append(sim.record)
 
-        return out
+        return np.array(out, dtype=np.uint8)
 
     def _weighted_trajectory(self, rng: random.Random) -> tuple[Simulator, float]:
         sim = Simulator(self.circuit.num_qubits, rng.getrandbits(63))
@@ -295,7 +298,7 @@ class CompiledSampler:
         # reused across sample() calls; sample_batch resets it in place per shot
         self._core = None if self._compiled is None else ColTableau(circuit.num_qubits)
 
-    def sample(self, shots: int, seed: int | None = None) -> list[list[int]]:
+    def sample(self, shots: int, seed: int | None = None) -> np.ndarray:
         if self._compiled is None:
             return self._sampler._sample_python(shots, seed)
 
@@ -304,9 +307,12 @@ class CompiledSampler:
 
         # frame sampler (bit-packed over shots) is the fast path; it returns None
         # when a measurement is random in the noiseless reference -> per-shot
-        # tableau re-run via sample_batch.
-        out = self._core.frame_sample(instrs, tables, shots, rng_seed)
-        if out is None:
-            out = self._core.sample_batch(instrs, tables, shots, rng_seed)
+        # tableau re-run via sample_batch. Both hand back a flat (bytes, num_meas)
+        # we view as a uint8 (shots, num_meas) array -- no per-bit Python ints.
+        res = self._core.frame_sample(instrs, tables, shots, rng_seed)
+        if res is None:
+            res = self._core.sample_batch(instrs, tables, shots, rng_seed)
 
-        return out
+        buf, num_meas = res
+
+        return np.frombuffer(buf, dtype=np.uint8).reshape(shots, num_meas)

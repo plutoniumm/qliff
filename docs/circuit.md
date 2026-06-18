@@ -74,7 +74,7 @@ c.observable(0, -1)
 | Method | Returns | Description |
 | --- | --- | --- |
 | `run(seed=None)` | `Simulator` | apply a **noiseless** circuit and return the final state; raises if it contains noise |
-| `sample(shots, seed=None)` | `list[list[int]]` | measurement records over `shots` Pauli-noise trajectories |
+| `sample(shots, seed=None)` | `ndarray[uint8]` | measurement records over `shots` Pauli-noise trajectories, shape `(shots, measurements)` |
 | `estimate(observable, shots=10000, stratify=None, seed=None)` | `float` | reweighted estimate of $\langle O\rangle$ |
 | `detector_sampler()` | `DetectorSampler` | a sampler of detection events (see [QEC](/qec)) |
 | `dem()` | `DetectorErrorModel` | the detector error model (see [QEC](/qec)) |

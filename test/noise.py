@@ -79,7 +79,7 @@ class NoiseTests(Question):
         """
         recs = Sampler(_bitflip_circuit(1.0)).sample(64, seed=0)
 
-        self.assertTrue(all(r == [1] for r in recs), msg="X_ERROR(1) must always flip")
+        self.assertTrue((recs == 1).all(), msg="X_ERROR(1) must always flip")
 
     def test_zero_probability(self):
         """
@@ -87,14 +87,14 @@ class NoiseTests(Question):
         """
         recs = Sampler(_bitflip_circuit(0.0)).sample(64, seed=1)
 
-        self.assertTrue(all(r == [0] for r in recs), msg="p=0 must do nothing")
+        self.assertTrue((recs == 0).all(), msg="p=0 must do nothing")
 
     def test_bitflip_rate(self):
         """
         BitFlip(p) flips |0> with empirical frequency about p.
         """
         recs = Sampler(_bitflip_circuit(0.25)).sample(5000, seed=2)
-        ones = sum(r[0] for r in recs) / len(recs)
+        ones = recs[:, 0].mean()
 
         self.assertLess(abs(ones - 0.25), 0.03, msg=f"flip rate {ones} != 0.25")
 
@@ -108,7 +108,7 @@ class NoiseTests(Question):
         c.append("DEPOLARIZE1", [0], 0.75)
         c.append("M", [0])
         recs = Sampler(c).sample(5000, seed=3)
-        ones = sum(r[0] for r in recs) / len(recs)
+        ones = recs[:, 0].mean()
 
         self.assertLess(abs(ones - 0.5), 0.04, msg=f"depolarized {ones} != 0.5")
 

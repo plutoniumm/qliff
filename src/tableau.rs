@@ -928,32 +928,33 @@ impl ColTableau {
     //   kind 2 = noise(branch_table=x); pick one branch ~ |weight|, apply its ops
     // branches[i] = [(weight, [(opcode,a,b), ...]), ...] (precompiled in Python).
     // One reused tableau, reset in place per shot; no per-gate Python dispatch.
-    // Returns shots x record-length 0/1. Non-Pauli / unknown ops never reach here
-    // (Python compiler falls back to its loop), so this stays Pauli-only.
+    // Returns (flat shots*num_meas bytes, num_meas). Non-Pauli / unknown ops never
+    // reach here (Python compiler falls back to its loop), so this stays Pauli-only.
     fn sample_batch(
         &mut self,
         instrs: Vec<(u8, u32, u32, u32)>,
         branches: Vec<Vec<(f64, Vec<(u8, u32, u32)>)>>,
         shots: usize,
         seed: u64,
-    ) -> Vec<Vec<i64>> {
-        // i64 (not u8) so PyO3 yields list[list[int]], not list[bytes].
+    ) -> (Vec<u8>, usize) {
+        // Flat shots*num_meas buffer (PyO3 -> bytes; Python views it as a uint8
+        // (shots, num_meas) array -- no per-bit Python int objects to build).
         // measurement coin and noise draws on independent streams
+        let num_meas = instrs.iter().filter(|&&(k, x, _, _)| k == 1 && x != 2).count();
         self.inner.rng = Rng::new(seed);
         let mut noise = Rng::new(seed.wrapping_add(0x9E37_79B9_7F4A_7C15));
-        let mut out = Vec::with_capacity(shots);
+        let mut out: Vec<u8> = Vec::with_capacity(shots * num_meas);
 
         for _ in 0..shots {
             self.reset_to_zero();
             self.inner.clear_record();
-            let mut rec = Vec::new();
 
             for &(kind, x, y, z) in &instrs {
                 match kind {
                     0 => self.apply_gate(x as u8, y as usize, z as usize),
                     1 => match x {
-                        0 => rec.push(self.measure(y as usize, None) as i64),
-                        1 => rec.push(self.mr(y as usize) as i64),
+                        0 => out.push(self.measure(y as usize, None) as u8),
+                        1 => out.push(self.mr(y as usize) as u8),
                         _ => self.reset(y as usize),
                     },
                     2 => {
@@ -976,9 +977,8 @@ impl ColTableau {
                     _ => {}
                 }
             }
-            out.push(rec);
         }
-        out
+        (out, num_meas)
     }
 
     // Pauli-frame batch sampler -- the fast path when every measurement is
@@ -995,7 +995,7 @@ impl ColTableau {
         branches: Vec<Vec<(f64, Vec<(u8, u32, u32)>)>>,
         shots: usize,
         seed: u64,
-    ) -> Option<Vec<Vec<i64>>> {
+    ) -> Option<(Vec<u8>, usize)> {
         let n = self.nq;
 
         // --- reference run (noiseless): record ref bits, bail if any is random ---
@@ -1177,18 +1177,18 @@ impl ColTableau {
             }
         }
 
-        // transpose measurement planes (num_meas x shots) -> shots x num_meas
-        let mut out = Vec::with_capacity(shots);
+        // transpose planes (num_meas x shots) -> flat shots x num_meas bytes
+        let num_meas = meas_planes.len();
+        let mut out = vec![0u8; shots * num_meas];
         for s in 0..shots {
             let (word, bit) = (s >> 6, s & 63);
-            let mut rec = Vec::with_capacity(meas_planes.len());
-            for plane in &meas_planes {
-                rec.push(((plane[word] >> bit) & 1) as i64);
+            let base = s * num_meas;
+            for (m, plane) in meas_planes.iter().enumerate() {
+                out[base + m] = ((plane[word] >> bit) & 1) as u8;
             }
-            out.push(rec);
         }
 
-        Some(out)
+        Some((out, num_meas))
     }
 
     #[pyo3(signature = (a, force=None))]

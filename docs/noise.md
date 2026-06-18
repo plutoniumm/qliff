@@ -60,7 +60,7 @@ Pauli channel — estimate it with `expect` (`estimate` reweights automatically)
 | Method | Handles | Notes |
 | --- | --- | --- |
 | `expect(obs, shots, seed=None, stratify=False)` | any channel | importance estimate, unbiased for any noise |
-| `sample(shots, seed=None)` | Pauli only | measurement records; raises on a general channel |
+| `sample(shots, seed=None)` | Pauli only | `uint8` array `(shots, measurements)`; raises on a general channel |
 
 `expect` draws one branch per noise location and reweights each trajectory by
 $\operatorname{sign}(q_\mu)\,\gamma$. On Pauli noise every weight is $1$, so it is

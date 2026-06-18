@@ -321,7 +321,7 @@ class StandardTests(Question):
         c.X_ERROR(0, 0.25)
         c.M(0)
         recs = c.sample(5000, seed=2)
-        rate = sum(r[0] for r in recs) / len(recs)
+        rate = recs[:, 0].mean()
 
         self.assertLess(abs(rate - 0.25), 0.03, msg=f"flip rate {rate:.3f} != 0.25")
 
@@ -333,7 +333,7 @@ class StandardTests(Question):
         c.DEPOLARIZE1(0, 0.75)
         c.M(0)
         recs = c.sample(5000, seed=3)
-        rate = sum(r[0] for r in recs) / len(recs)
+        rate = recs[:, 0].mean()
 
         self.assertLess(abs(rate - 0.5), 0.04, msg=f"depolarized {rate:.3f} != 0.5")
 
@@ -650,7 +650,7 @@ class CircuitTests(Question):
         c = Circuit(1).X(0).noise(BitFlip(1.0), 0).M(0)
         record = c.sample(1, seed=0)[0]
 
-        self.assertEqual(record, [0], msg="certain bit-flip must undo the X")
+        self.assertEqual(record.tolist(), [0], msg="certain bit-flip must undo the X")
 
     def test_is_pauli_and_estimate(self):
         """
