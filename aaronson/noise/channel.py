@@ -45,17 +45,39 @@ class Channel(ABC):
         return ((1.0 if weight >= 0.0 else -1.0) * gamma, ops)
 
 
-class PauliChannel1(Channel):
+class PauliChannel(Channel):
     """
-    Single-qubit Pauli channel applying X, Y, Z with probabilities px, py, pz.
+    Pauli channel: a probabilistic mixture of Pauli operators.
+
+    Single-qubit (twoq=False): apply X, Y, Z with probabilities px, py, pz.
+    Two-qubit (twoq=True): two-qubit depolarizing -- the 15 non-identity
+    two-qubit Paulis, each with probability px/15 (py and pz are ignored).
     """
 
-    def __init__(self, px, py, pz):
+    def __init__(self, px, py=0.0, pz=0.0, twoq=False):
         self.px = float(px)
         self.py = float(py)
         self.pz = float(pz)
+        self.twoq = twoq
 
     def branches(self, targets):
+        if self.twoq:
+            a, b = targets[0], targets[1]
+            each = self.px / 15.0
+            out = [(1.0 - self.px, [])]
+            for pa in _PAULI1:
+                for pb in _PAULI1:
+                    if pa == "I" and pb == "I":
+                        continue
+                    ops = []
+                    if pa != "I":
+                        ops.append((pa, (a,)))
+                    if pb != "I":
+                        ops.append((pb, (b,)))
+                    out.append((each, ops))
+
+            return out
+
         q = targets[0]
         keep = 1.0 - (self.px + self.py + self.pz)
 
@@ -65,32 +87,6 @@ class PauliChannel1(Channel):
             (self.py, [("Y", (q,))]),
             (self.pz, [("Z", (q,))]),
         ]
-
-
-class PauliChannel2(Channel):
-    """
-    Two-qubit Pauli channel: the 15 non-identity Paulis each with weight p/15.
-    """
-
-    def __init__(self, p):
-        self.p = float(p)
-
-    def branches(self, targets):
-        a, b = targets[0], targets[1]
-        each = self.p / 15.0
-        out = [(1.0 - self.p, [])]
-        for pa in _PAULI1:
-            for pb in _PAULI1:
-                if pa == "I" and pb == "I":
-                    continue
-                ops = []
-                if pa != "I":
-                    ops.append((pa, (a,)))
-                if pb != "I":
-                    ops.append((pb, (b,)))
-                out.append((each, ops))
-
-        return out
 
 
 class PauliRotation(Channel):
@@ -133,13 +129,10 @@ class PauliRotation(Channel):
 
 class AmplitudeDamping(Channel):
     """
-    Amplitude-damping channel with damping probability p (arXiv:2512.07304).
-
-    Decomposes exactly over {I, Z, reset-to-|0>} with weights q_I, q_Z,
-    q_R where q_I = [(1-p)+sqrt(1-p)]/2, q_Z = [(1-p)-sqrt(1-p)]/2 (<0)
-    and q_R = p. Sampling overhead gamma = [(1+p)-sqrt(1-p)]/2 ~ 3p/4 with
-    negativity 1/3 -- nonunitary, so nearly as cheap as Pauli noise. Not a Pauli
-    channel; use an importance sampler.
+    Amplitude-damping channel, damping probability p (arXiv:2512.07304).
+    Exact decomposition over {I, Z, reset-to-|0>} with q_I = [(1-p)+sqrt(1-p)]/2,
+    q_Z = [(1-p)-sqrt(1-p)]/2 (<0), q_R = p; overhead gamma ~ 3p/4, so nearly as
+    cheap as Pauli noise. Not a Pauli channel; use an importance sampler.
     """
 
     is_pauli = False
@@ -164,28 +157,28 @@ def Depolarize1(p):
     """
     Single-qubit depolarizing channel (X, Y, Z each with probability p/3).
     """
-    return PauliChannel1(p / 3.0, p / 3.0, p / 3.0)
+    return PauliChannel(p / 3.0, p / 3.0, p / 3.0)
 
 
 def Depolarize2(p):
     """
     Two-qubit depolarizing channel (15 Paulis each with probability p/15).
     """
-    return PauliChannel2(p)
+    return PauliChannel(p, twoq=True)
 
 
 def BitFlip(p):
     """
     Bit-flip channel (X with probability p).
     """
-    return PauliChannel1(p, 0.0, 0.0)
+    return PauliChannel(p, 0.0, 0.0)
 
 
 def PhaseFlip(p):
     """
     Phase-flip channel (Z with probability p).
     """
-    return PauliChannel1(0.0, 0.0, p)
+    return PauliChannel(0.0, 0.0, p)
 
 
 NOISE_FACTORIES = {
@@ -193,7 +186,7 @@ NOISE_FACTORIES = {
     "DEPOLARIZE2": Depolarize2,
     "X_ERROR": BitFlip,
     "Z_ERROR": PhaseFlip,
-    "PAULI_CHANNEL_1": lambda arg: PauliChannel1(*arg),
+    "PAULI_CHANNEL_1": lambda arg: PauliChannel(*arg),
     "RZ": lambda arg: PauliRotation("Z", arg),
     "RX": lambda arg: PauliRotation("X", arg),
     "AMPLITUDE_DAMP": AmplitudeDamping,

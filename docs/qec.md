@@ -1,10 +1,10 @@
 # Error Correction
 
-`aaronson.qec` turns a noisy [`Circuit`](/circuit) into the inputs a decoder
-needs: detection events, a detector error model, and the parity-check / matching
-exports built from it. **No decoder is bundled** — the exports drop straight into
-MWPM (pymatching), belief propagation, or an ML decoder. Ready-made code circuits
-let you skip straight to a logical-error-rate curve.
+`aaronson.qec` turns a noisy [`Circuit`](/circuit) into decoder inputs: detection
+events, a detector error model, and the parity-check / matching exports built from
+it. **No decoder is bundled.** The exports drop straight into MWPM (pymatching),
+belief propagation, or an ML decoder. Ready-made code circuits let you jump
+straight to a logical-error-rate curve.
 
 ## Code circuits
 
@@ -31,8 +31,8 @@ measurement record (see [Circuit](/circuit#detectors-and-observables)).
 
 `circuit.detector_sampler()` returns a sampler whose `sample(shots, seed=None)`
 yields two `numpy` `uint8` arrays: the **syndrome** and the **logical labels**. A
-detection event is a detector's measured parity XORed with its deterministic
-noiseless value, so a clean run produces all-zero syndromes.
+detection event is a detector's measured parity XORed with its noiseless value, so
+a clean run produces all-zero syndromes.
 
 | Output | Shape | Meaning |
 | --- | --- | --- |
@@ -48,14 +48,14 @@ These feed a decoder directly, or serve as a training set for an ML decoder.
 ## DetectorErrorModel
 
 `circuit.dem()` builds the error model by propagating each Pauli fault branch
-sign-free to the end of the circuit and recording which detectors and observables
-it flips; mechanisms with identical signatures merge as independent errors. It is
+sign-free to the end of the circuit, recording which detectors and observables it
+flips. Mechanisms with identical signatures merge as independent errors. It is
 exact for Pauli noise.
 
 | Property/Method | Returns | Description |
 | --- | --- | --- |
 | `mechanisms` | `list` | `(probability, detectors, observables)` per mechanism |
-| `check_matrix()` | `(H, priors, obs_matrix)` | parity-check `H` (detectors×mechanisms), priors, and observable matrix — for BP |
+| `check_matrix()` | `(H, priors, obs_matrix)` | $\mathbb{F}_2$ parity-check `H` (detectors×mechanisms), priors, observable matrix — for BP |
 | `weights()` | `ndarray` | per-mechanism MWPM weights $\log\frac{1-p}{p}$ |
 | `graphlike_edges()` | `list` | mechanisms flipping $\le 2$ detectors, as `(dets, obs, weight)` — a matching graph |
 
@@ -64,9 +64,12 @@ exact for Pauli noise.
 Wire the exports into pymatching, decode the sampled syndromes, and compare to
 the labels. `logical_fidelity(predictions, observed)` returns $1 - \text{LER}$.
 
-::: code-group
+```python
+from pymatching import Matching
+from aaronson.qec import repetition_code, logical_fidelity
 
-```python [Example]
+rep = repetition_code(distance=3, rounds=3, p=0.05)
+
 dem = rep.dem()
 H, priors, obs_matrix = dem.check_matrix()
 
@@ -79,18 +82,9 @@ predicted = matching.decode_batch(dets)
 fidelity = logical_fidelity(predicted, obs)   # 1 - logical error rate
 ```
 
-```python [imports]
-from pymatching import Matching
-from aaronson.qec import repetition_code, logical_fidelity
-
-rep = repetition_code(distance=3, rounds=3, p=0.05)
-```
-
-:::
-
-Both codes show the logical error rate falling as the distance grows below
-threshold — the signature of working error correction. See `base/surface_code.py`
-for full LER / fidelity tables across distances.
+Below threshold, the logical error rate falls as distance grows — the signature
+of working error correction. See `base/surface_code.py` for full LER / fidelity
+tables across distances.
 
 > [!NOTE]
 > The detector error model and detection sampler use Pauli-noise trajectories.

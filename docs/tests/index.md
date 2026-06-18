@@ -1,11 +1,17 @@
 # Testing
 
-aaronson's test suite is an "exam" framework (adapted from
-[plutoniumm/qudit](https://github.com/plutoniumm/qudit)): each test file is a
-standalone script that builds an `Exam` over a `Question` subclass, runs it, and
-emits a **markdown report** alongside the usual console pass/fail summary.
+aaronson's tests run as an "exam" framework, adapted from
+[plutoniumm/qudit](https://github.com/plutoniumm/qudit).
 
-Those reports can be published straight into this site.
+Each test file is a standalone script. It builds an `Exam` over a `Question`
+subclass, runs it, and emits a **markdown report** next to the console pass/fail
+summary.
+
+Every report is a `Test | What it does | Result` table: one row per test, with a
+✅ / ❌ / ⚠️ / ⏭️ result. Failures get full tracebacks in a `## Failures`
+section below the table.
+
+These reports publish straight into this site.
 
 ## Running the tests
 
@@ -13,9 +19,8 @@ Those reports can be published straight into this site.
 ./do test
 ```
 
-By default reports are written to `test/_reports/` (gitignored). To surface them
-in these docs instead, point the harness at the docs `tests/` directory via the
-`MDR_OUT` environment variable:
+Reports land in `test/_reports/` by default (gitignored). To surface them in
+these docs, point the harness at `docs/tests/` with the `MDR_OUT` variable:
 
 ```sh
 MDR_OUT="$(pwd)/docs/tests" ./do test
@@ -29,10 +34,11 @@ Each test file emits one markdown file into that directory:
 | `test/tableau.py` | `tableau.md` | CHP tableau gate correctness |
 | `test/measure.py` | `measure.md` | Measurement outcomes and statistics |
 
-The VitePress sidebar discovers any `*.md` in `docs/tests/` automatically, so a
-freshly generated report shows up under **Testing** with no further wiring. The
-reports are gitignored (this `index.md` is the only checked-in file here), so
-regenerate them whenever you want the latest results.
+The VitePress sidebar picks up any `*.md` in `docs/tests/` automatically. A
+fresh report shows up under **Testing** with no extra wiring.
+
+The reports are gitignored; this `index.md` is the only checked-in file here.
+Regenerate them whenever you want current results.
 
 ## Building the docs with reports
 

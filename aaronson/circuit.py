@@ -4,14 +4,11 @@ from .simulator import CLIFFORD_OPS, Simulator
 
 class Circuit:
     """
-    A stim-like Circuit IR over the Simulator: an ordered list of
-    (name, targets, arg) instructions plus detectors and observables.
-
-    Build fluently with uppercase methods mirroring the Simulator -- gates
-    (c.H(0), c.CX(0, 1)), measurements (c.M/MR/R) and noise
-    (c.DEPOLARIZE1(0, 0.1), c.RZ(0, theta)) -- or append anything else.
-    Run noiseless with run; sample noisy with sample/estimate or the QEC
-    helpers detector_sampler/dem.
+    A stim-like IR over the Simulator: ordered (name, targets, arg)
+    instructions plus detectors and observables. Build fluently with uppercase
+    gate/measurement/noise methods mirroring the Simulator (c.H(0),
+    c.DEPOLARIZE1(0, 0.1)); run noiseless with run, sample noisy with
+    sample/estimate or the QEC helpers detector_sampler/dem.
     """
 
     def __init__(self, num_qubits=0):
@@ -103,44 +100,30 @@ class Circuit:
         """
         Measurement records over shots trajectories (Pauli noise only).
         """
-        from .noise import MonteCarlo
+        from .noise import Sampler
 
-        return MonteCarlo(self).sample(shots, seed)
+        return Sampler(self).sample(shots, seed)
 
-    def estimate(self, observable, shots=10000, method="auto", seed=None):
+    def estimate(self, observable, shots=10000, stratify=None, seed=None):
         """
-        Estimate <observable> over trajectories, picking a sampler by default.
-
-        method="auto" uses plain Monte-Carlo when every channel is Pauli, else
-        the stratified importance sampler (unbiased for coherent/general noise).
-        Override with "montecarlo", "importance" or "stratified".
+        Estimate <observable> over reweighted trajectories, unbiased for any channel.
+        stratify=None auto-picks: flat importance sampling for Pauli noise,
+        stratified by fault count for general noise (lower variance);
+        True/False forces the choice.
         """
-        from .noise import ImportanceSampler, MonteCarlo, StratifiedSampler
+        from .noise import Sampler
 
-        if method == "auto":
-            method = "montecarlo" if self.is_pauli else "stratified"
-        samplers = {
-            "montecarlo": MonteCarlo,
-            "importance": ImportanceSampler,
-            "stratified": StratifiedSampler,
-        }
-        if method not in samplers:
-            raise ValueError(f"unknown method {method!r}")
+        if stratify is None:
+            stratify = not self.is_pauli
 
-        return samplers[method](self).expect(observable, shots, seed)
+        return Sampler(self).expect(observable, shots, seed=seed, stratify=stratify)
 
     def detector_sampler(self):
-        """
-        A DetectorSampler for this circuit.
-        """
         from .qec import DetectorSampler
 
         return DetectorSampler(self)
 
     def dem(self):
-        """
-        The DetectorErrorModel for this circuit.
-        """
         from .qec import DetectorErrorModel
 
         return DetectorErrorModel(self)

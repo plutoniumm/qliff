@@ -101,7 +101,7 @@ class Simulator:
 
     reset = R
 
-    def measure_pauli(self, pauli, force=None):
+    def measure(self, pauli, force=None):
         """
         Measure Hermitian pauli (PauliString or signed string like "ZZ") in
         place; return (value=+-1, random) where random flags a coin-flip
@@ -118,15 +118,15 @@ class Simulator:
         return value, random
 
     @property
-    def measure_record(self):
+    def record(self):
         return [int(b) for b in self._t.record]
 
-    def clear_record(self):
+    def clear(self):
         self._t.clear_record()
 
         return self
 
-    def peek_observable(self, pauli):
+    def peek(self, pauli):
         """
         Expectation <P> in {-1, 0, +1} for Hermitian Pauli P (PauliString or
         signed string like "ZZ", "-X"). Does not disturb the state.
@@ -155,7 +155,7 @@ class Simulator:
         """
         return [to_str(int(sg), x, z) for sg, x, z in self._t.stabilizers()]
 
-    def canonical_stabilizers(self):
+    def canon(self):
         """
         Canonical signed-Pauli generators (unique per stabilizer state).
         """

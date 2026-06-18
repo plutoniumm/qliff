@@ -11,8 +11,6 @@ enable = [
   "py/f-string-no-placeholder", # f-string without any placeholders
   "py/mutable-default-arg",     # mutable default argument
   "py/percent-format",          # %-style string formatting
-  "py/print-statement",         # bare print() call
-  "py/redundant-parens-return", # redundant parentheses in return statement
   "py/trailing-comma",          # multiline dict literal without trailing comma
 ]
 disable = []

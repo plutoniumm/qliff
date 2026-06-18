@@ -1,9 +1,9 @@
 # Getting Started
 
-`aaronson` is a Clifford **+** noisy stabilizer simulator. The tableau lives in a
-native Rust core (PyO3 + setuptools-rust); everything you read, extend, or override is
-plain Python. The API is stim-style uppercase, so circuits read the way you would
-write them on paper.
+`aaronson` is a Clifford **+** noisy stabilizer simulator.
+
+- **Fast core, Python surface.** The tableau lives in a native Rust core (PyO3 + setuptools-rust); everything you read, extend, or override is plain Python.
+- **Reads like paper.** The API is stim-style uppercase, so circuits look the way you write them by hand.
 
 ::: warning Early development (0.1.0)
 APIs may change freely pre-1.0.
@@ -15,17 +15,16 @@ APIs may change freely pre-1.0.
 pip install aaronson
 ```
 
-The wheel ships the compiled core, so no Rust toolchain is needed to use the
-package. Verify the install:
+The wheel ships the compiled core — no Rust toolchain needed. Verify it:
 
 ```sh
-python -c "from aaronson import Simulator; print(Simulator(2).H(0).CX(0,1).canonical_stabilizers())"
+python -c "from aaronson import Simulator; print(Simulator(2).H(0).CX(0,1).canon())"
 # ['+XX', '+ZZ']
 ```
 
 ## Core ideas
 
-The library is built from four layers, each documented on its own page.
+Four layers, each with its own page:
 
 | Layer | Entry point | What it is |
 | --- | --- | --- |
@@ -34,47 +33,49 @@ The library is built from four layers, each documented on its own page.
 | Observables | [`PauliString`](/observables) | Pauli operators, expectations, and stabilizer-state fidelity. |
 | Noise & QEC | [`noise`](/noise), [`qec`](/qec) | Importance-sampled noisy simulation and decoder-ready error-correction primitives. |
 
-A `Simulator` is stateful and immediate — apply a gate and the tableau changes
-now. A `Circuit` is a recipe — you build it once, then run it, sample it, or
-hand it to a noise or QEC sampler. Use the simulator for interactive work and
-classical feedback; use the circuit when you want to sample many shots or extract
-an error model.
+`Simulator` vs `Circuit`:
+
+- **`Simulator`** — stateful and immediate. Apply a gate, the tableau changes now. Use it for interactive work and classical feedback.
+- **`Circuit`** — a recipe. Build once, then run, sample, or hand to a noise/QEC sampler. Use it to sample many shots or extract an error model.
 
 ## Quickstart: a Bell state
 
-The Bell pair is the "hello world" of stabilizer simulation. The `Simulator`
-starts in $|0\dots0\rangle$; single-qubit gates take one or more targets,
-two-qubit gates take flattened `(control, target)` pairs, and every gate method
-returns `self` so calls chain.
+The Bell pair is the "hello world" of stabilizer simulation. Three conventions:
+
+- The `Simulator` starts in $|0\dots0\rangle$.
+- Single-qubit gates take one or more targets; two-qubit gates take flattened `(control, target)` pairs.
+- Every gate method returns `self`, so calls chain.
 
 ```python
 from aaronson import Simulator
 
-sim = Simulator(2).H(0).CX(0, 1)   # (|00> + |11>) / sqrt(2)
+sim = Simulator(2).H(0).CX(0, 1)   # |Phi+> = (|00> + |11>) / sqrt(2)
 
-sim.canonical_stabilizers()        # ['+XX', '+ZZ'] — stabilized by +XX and +ZZ
-sim.peek_observable("ZZ")          # +1, read without collapsing the state
+sim.canon()        # ['+XX', '+ZZ'] — stabilized by +XX and +ZZ
+sim.peek("ZZ")     # +1, reads <ZZ> without collapsing the state
 ```
 
-Measurements collapse the state and return classical bits; outcomes append to the
-[`measure_record`](/api#measure-record).
+Measurements collapse the state and return classical bits. Outcomes append to the
+[`record`](/api#record):
 
 ```python
 sim = Simulator(2, seed=0).H(0).CX(0, 1)
 a, b = sim.M(0), sim.M(1)          # perfectly correlated: a == b
 ```
 
-Because the simulator is stateful, **classical feedback is just Python** — no
-special API is needed for teleportation or syndrome correction:
+The simulator is stateful, so **classical feedback is just Python** — teleportation
+and syndrome correction need no special API:
 
 ```python
 sim = Simulator(3, seed=0)
 sim.H(0)                            # message qubit
 sim.H(1).CX(1, 2)                   # Bell pair on (1, 2)
 sim.CX(0, 1).H(0)
-if sim.M(1): sim.X(2)               # apply corrections conditioned on outcomes
-if sim.M(0): sim.Z(2)
-sim.peek_observable("__X")          # +1: |+> teleported to qubit 2
+if sim.M(1) == 1:                   # corrections conditioned on outcomes
+    sim.X(2)
+if sim.M(0) == 1:
+    sim.Z(2)
+sim.peek("IIX")          # +1: |+> teleported to qubit 2
 ```
 
 ## Next steps

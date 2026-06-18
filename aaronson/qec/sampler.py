@@ -40,7 +40,7 @@ class DetectorSampler:
                 for gate, qubits in ops:
                     getattr(sim, gate)(*qubits)
 
-        return sim.measure_record
+        return sim.record
 
     def sample(self, shots, seed=None):
         """
@@ -50,8 +50,10 @@ class DetectorSampler:
         rng = random.Random(seed)
         dets = np.zeros((shots, len(self.circuit.detectors)), dtype=np.uint8)
         obs = np.zeros((shots, len(self.circuit.observables)), dtype=np.uint8)
+
         for s in range(shots):
             record = self._record(rng)
+
             for j, d in enumerate(self.circuit.detectors):
                 dets[s, j] = self._parity(record, d) ^ self.det_ref[j]
             for j, (_, recs) in enumerate(self.circuit.observables):

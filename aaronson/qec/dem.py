@@ -13,6 +13,7 @@ _PAULI_BITS = {
 def _fault_bits(ops, n):
     x = [0] * n
     z = [0] * n
+
     for gate, qubits in ops:
         if gate not in _PAULI_BITS:
             raise ValueError(f"DEM supports Pauli faults only, got {gate!r}")
@@ -55,6 +56,7 @@ def _propagate(circuit, loc, fx, fz):
     z = [0] * n
     flipped = set()
     midx = 0
+
     for k, (name, targets, _arg) in enumerate(circuit.instructions):
         if k == loc:
             for q in range(n):
@@ -131,11 +133,9 @@ class DetectorErrorModel:
 
     def check_matrix(self):
         """
-        Return (H, priors, observable_matrix) numpy arrays for BP decoders.
-
-        H is (detectors x mechanisms) uint8, observable_matrix is
-        (observables x mechanisms) uint8, priors holds per-mechanism
-        probabilities.
+        (H, priors, observable_matrix) for BP decoders: H is
+        (detectors x mechanisms) uint8, observable_matrix is
+        (observables x mechanisms) uint8, priors the per-mechanism probabilities.
         """
         nm = len(self.mechanisms)
         h = np.zeros((self.num_detectors, nm), dtype=np.uint8)

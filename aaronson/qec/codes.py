@@ -6,10 +6,9 @@ from ..circuit import Circuit
 def repetition_code(distance, rounds, p):
     """
     Bit-flip repetition-code memory experiment: distance data + distance-1
-    ancillas, rounds rounds, per-round X error p on each data qubit. Ancillas
-    measure adjacent Z parities (CX + MR); detectors compare each ancilla round-to-
-    round (first round vs zero); final data M seeds boundary detectors and the
-    logical-Z observable.
+    ancillas, per-round X error p on each data qubit. Ancillas measure adjacent
+    Z parities; detectors compare each ancilla round-to-round; final data M seeds
+    boundary detectors and the logical-Z observable.
     """
     c = Circuit()
     data = list(range(distance))
@@ -38,9 +37,8 @@ def repetition_code(distance, rounds, p):
 
 def _qubit_grid(distance):
     """
-    Map rotated-surface-code sites to qubit indices. Data qubits fill the
-    distance x distance integer grid; stabilizer ancillas sit on plaquette
-    centres. Returns (data, plaq): data[(r, c)] -> qubit index, and plaq a
+    Map rotated-surface-code sites to qubit indices. Returns (data, plaq):
+    data[(r, c)] -> qubit index over the distance x distance grid, and plaq a
     list of (kind, anc_index, touched_data) with kind in {"X", "Z"}.
     """
     data = {}
@@ -71,14 +69,11 @@ def _qubit_grid(distance):
 
 def rotated_surface_code(distance, rounds, p):
     """
-    Rotated planar surface-code Z-memory experiment.
-
-    distance x distance data grid with X/Z plaquette stabilizers (weight-4 bulk,
-    weight-2 boundary). Logical |0>; each round measures every stabilizer (H-
-    conjugated CX for X checks, plain CX for Z) with MR and applies DEPOLARIZE1
-    p to every data qubit. Only Z stabilizers -- deterministic in a Z-basis
-    memory -- declare round-to-round detectors, keeping the graph graphlike. Final
-    data M seeds boundary Z detectors and the logical-Z observable along a column.
+    Rotated planar surface-code Z-memory experiment: distance x distance data
+    grid with weight-4/2 X/Z plaquettes, logical |0>, DEPOLARIZE1 p per round.
+    Only Z stabilizers declare round-to-round detectors (deterministic in a
+    Z-basis memory), keeping the graph graphlike. Final data M seeds boundary Z
+    detectors and the logical-Z observable along a column.
     """
     data, plaq = _qubit_grid(distance)
     z_checks = [pq for pq in plaq if pq[0] == "Z"]
@@ -120,9 +115,9 @@ def rotated_surface_code(distance, rounds, p):
 
 def logical_fidelity(predictions, observed):
     """
-    Logical fidelity 1 - mean(prediction != observed) (complement of the logical
-    error rate). Arrays of decoded vs true observable flips; a row errs if any column
-    disagrees.
+    Logical fidelity 1 - mean(prediction != observed), the complement of the
+    logical error rate. Arrays of decoded vs true observable flips; a multi-column
+    row errs if any column disagrees.
     """
     predictions = np.asarray(predictions)
     observed = np.asarray(observed)

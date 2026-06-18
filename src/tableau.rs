@@ -34,6 +34,8 @@ impl Rng {
 //   P1=X -> z2*(2*x2-1)   = +1 if P2=Y, -1 if P2=Z, else 0
 //   P1=Z -> x2*(1-2*z2)   = +1 if P2=X, -1 if P2=Y, else 0
 //   P1=Y -> z2 - x2       = +1 if P2=Z, -1 if P2=X, else 0
+// Kept as the scalar reference that `word_g` (below) implements bit-parallel.
+#[allow(dead_code)]
 #[inline]
 fn g(x1: bool, z1: bool, x2: bool, z2: bool) -> i32 {
     match (x1, z1) {
@@ -42,6 +44,22 @@ fn g(x1: bool, z1: bool, x2: bool, z2: bool) -> i32 {
         (false, true) => (x2 as i32) * (1 - 2 * (z2 as i32)),  // Z
         (true, true) => (z2 as i32) - (x2 as i32),             // Y
     }
+}
+
+// word_g: Σ of g over the 64 Pauli lanes packed in one word, where lane k holds
+// P1 = (xi,zi)[k] (first operand) and P2 = (xh,zh)[k] (second). This is the
+// bit-parallel form of the per-qubit g() loop: each lane contributes +1/-1/0 and
+// we popcount the two masks. Encoding P=(x,z): I=00 X=10 Z=01 Y=11.
+//   +1 lanes: (X,Y) (Z,X) (Y,Z)        -1 lanes: (X,Z) (Z,Y) (Y,X)
+// At every lane (x1,z1) is exactly one of I/X/Z/Y, so the three +terms (and the
+// three -terms) live on disjoint lanes -> OR-then-popcount counts each once, and
+// a +term and -term never share a lane. Lanes past nq are all-zero => I => 0, so
+// the unused tail of the last word is harmless and needs no masking.
+#[inline]
+fn word_g(xi: u64, zi: u64, xh: u64, zh: u64) -> i32 {
+    let plus = (xi & !zi & xh & zh) | (!xi & zi & xh & !zh) | (xi & zi & !xh & zh);
+    let minus = (xi & !zi & !xh & zh) | (!xi & zi & xh & zh) | (xi & zi & xh & !zh);
+    plus.count_ones() as i32 - minus.count_ones() as i32
 }
 
 // NOTE: in the tableu we will start with |00> in all instances because that makes dealing with ZZ easy.
@@ -74,7 +92,8 @@ Each row is actually
 - Z[stuff]
 - r[stuff]
 
-but in fact gets packed to a single row as [x1...xn, z1...zn, r1...rn]. An example for |00> but with Vec<u8> packing would be
+but in fact gets packed to a single row as [x1...xn, z1...zn, r1...rn].
+An example for |00> but with Vec<u8> packing would be
 
        x         z         r   Pauli
 row 0  00000001  00000000  +   X₀      ← destab
@@ -89,6 +108,7 @@ impl Tableau {
     #[inline]
     // I will not apologise for doing unhinged things
     fn get_x(&self, i: usize, j: usize) -> bool {
+        // == 1 is to get a bool out
         (self.xs[i * self.w + (j >> 6)] >> (j & 63)) & 1 == 1
     }
 
@@ -128,24 +148,15 @@ impl Tableau {
         self.signs[dst] = self.signs[src];
     }
 
-    /*
-    OLD SHIT COMMENT
-    // rowsum(h,i): row_h <- row_i . row_h  (Pauli-group product)
-    //   e = 2*r_i + 2*r_h + Σ_j g(row_i[j], row_h[j])    // total phase is i^e
-    //   r_h <- (e mod 4 == 2) ? 1 : 0                     // e is always 0 or 2 here
-    //   x_h ^= x_i ;  z_h ^= z_i
-    */
-
-    // row h <- row i * row h
     fn rowsum(&mut self, h: usize, i: usize) {
+        let ib = i * self.w;
+        let hb = h * self.w;
+
+        // total i-power exponent: 2*r_i + 2*r_h + Σ_j g(row_i[j], row_h[j]),
+        // accumulated a word (64 lanes) at a time instead of qubit by qubit.
         let mut sum: i64 = 2 * (self.signs[h] as i64) + 2 * (self.signs[i] as i64);
-        for j in 0..self.nq {
-            sum += g(
-                self.get_x(i, j),
-                self.get_z(i, j),
-                self.get_x(h, j),
-                self.get_z(h, j)
-            ) as i64;
+        for k in 0..self.w {
+            sum += word_g(self.xs[ib + k], self.zs[ib + k], self.xs[hb + k], self.zs[hb + k]) as i64;
         }
 
         self.signs[h] =
@@ -156,19 +167,11 @@ impl Tableau {
             };
 
         for k in 0..self.w {
-            let xv = self.xs[i * self.w + k];
-            let zv = self.zs[i * self.w + k];
-            self.xs[h * self.w + k] ^= xv;
-            self.zs[h * self.w + k] ^= zv;
+            self.xs[hb + k] ^= self.xs[ib + k];
+            self.zs[hb + k] ^= self.zs[ib + k];
         }
     }
 
-    // measure Z_a  (force pins the random coin):
-    //   ∃ stab row p in N..2N with x_{p,a}=1  (Z_a anticommutes -> random):
-    //     rowsum(row, p) for every other row hitting a   // leave p the lone anticommuter
-    //     destab_p <- stab_p ;  stab_p <- (-1)^coin Z_a ;  return coin
-    //   else  (Z_a commutes with all -> deterministic):
-    //     scratch <- Π stab_k over destabs k that hit a ;  return sign(scratch)
     fn do_measure(&mut self, a: usize, force: Option<bool>) -> bool {
         let n = self.nq;
         let mut p = None;
@@ -367,21 +370,33 @@ impl Tableau {
         }
     }
 
-    // CZ = H on b, CX(a,b), H on b
+    // CZ (symmetric): za ^= xb; zb ^= xa; sign ^= xa & xb & (za ^ zb).
+    // Direct single pass over rows. Composing H_b·CX(a,b)·H_b gives this sign
+    // term (the za,zb in it are the originals, read before the z-updates).
     fn cz(&mut self, a: usize, b: usize) {
-        self.h(b);
-        self.cx(a, b);
-        self.h(b);
+        let wa = a >> 6;
+        let sa = a & 63;
+        let wb = b >> 6;
+        let sb = b & 63;
+        for i in 0..2 * self.nq {
+            let ia = i * self.w + wa;
+            let ib = i * self.w + wb;
+            let xa = (self.xs[ia] >> sa) & 1;
+            let za = (self.zs[ia] >> sa) & 1;
+            let xb = (self.xs[ib] >> sb) & 1;
+            let zb = (self.zs[ib] >> sb) & 1;
+            self.signs[i] ^= (xa & xb & (za ^ zb)) as u8;
+            self.zs[ia] ^= xb << sa;
+            self.zs[ib] ^= xa << sb;
+        }
     }
 
-    // SWAP = CX(a,b), CX(b,a), CX(a,b)
     fn swap(&mut self, a: usize, b: usize) {
         self.cx(a, b);
         self.cx(b, a);
         self.cx(a, b);
     }
 
-    // measure qubit a (force pins the coin); appends the outcome to the record
     #[pyo3(signature = (a, force=None))]
     fn measure(&mut self, a: usize, force: Option<bool>) -> bool {
         let o = self.do_measure(a, force);
@@ -448,16 +463,16 @@ impl Tableau {
             }
             if sp & 1 == 1 {
                 let st = n + k;
+                let stb = st * self.w;
+                // scratch (sx,sz) <- stab_st * scratch; phase accumulated word-wise.
                 let mut sum: i64 = 2 * ssign + 2 * (self.signs[st] as i64);
-                for j in 0..n {
-                    let x2 = (sx[j >> 6] >> (j & 63)) & 1 == 1;
-                    let z2 = (sz[j >> 6] >> (j & 63)) & 1 == 1;
-                    sum += g(self.get_x(st, j), self.get_z(st, j), x2, z2) as i64;
+                for w in 0..self.w {
+                    sum += word_g(self.xs[stb + w], self.zs[stb + w], sx[w], sz[w]) as i64;
                 }
                 ssign = if sum.rem_euclid(4) == 0 { 0 } else { 1 };
                 for w in 0..self.w {
-                    sx[w] ^= self.xs[st * self.w + w];
-                    sz[w] ^= self.zs[st * self.w + w];
+                    sx[w] ^= self.xs[stb + w];
+                    sz[w] ^= self.zs[stb + w];
                 }
             }
         }
@@ -468,7 +483,6 @@ impl Tableau {
         }
     }
 
-    // measure an arbitrary Pauli (px,pz) like do_measure; returns (outcome, was_random)
     #[pyo3(signature = (px, pz, force=None))]
     fn measure_pauli(&mut self, px: Vec<u8>, pz: Vec<u8>, force: Option<bool>) -> (bool, bool) {
         let n = self.nq;

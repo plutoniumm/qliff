@@ -64,8 +64,8 @@ class Question(unittest.TestCase):
     def tableauEqual(self, a, b, msg=None):
         """Two simulators describe the same stabilizer state (canonical form)."""
         self.assertEqual(
-            a.canonical_stabilizers(),
-            b.canonical_stabilizers(),
+            a.canon(),
+            b.canon(),
             msg or "stabilizer groups differ",
         )
 
@@ -135,10 +135,10 @@ class Exam:
 
     def _write(self, result, dt):
         emoji = {
-            "pass": "[pass]",
-            "fail": "[FAIL]",
-            "error": "[ERROR]",
-            "skip": "[skip]",
+            "pass": "✅ pass",
+            "fail": "❌ fail",
+            "error": "⚠️ error",
+            "skip": "⏭️ skip",
         }
         npass = sum(1 for r in result.records if r[2] == "pass")
         lines = [
@@ -148,13 +148,30 @@ class Exam:
             "",
             f"**{npass}/{len(result.records)} passed** in {dt * 1000:.0f}ms",
             "",
+            "| Test | What it does | Result |",
+            "| ---- | ------------ | ------ |",
         ]
-        for nm, doc, st, detail in result.records:
-            lines.append(f"### {emoji.get(st, '?')} `{nm}`")
-            if doc:
-                lines += ["", doc]
-            if detail:
-                lines += ["", "```", detail, "```"]
-            lines.append("")
+        for nm, doc, st, _detail in result.records:
+            # collapse to one line, then escape table + HTML metacharacters so
+            # cells like "<Z> on |0>" don't read as unclosed tags or column breaks.
+            what = " ".join(doc.split())
+            what = (
+                what.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("|", "\\|")
+            ) or "—"
+            lines.append(f"| `{nm}` | {what} | {emoji.get(st, '?')} |")
+
+        failures = [
+            (nm, detail)
+            for nm, _doc, st, detail in result.records
+            if st in ("fail", "error") and detail
+        ]
+        if failures:
+            lines += ["", "## Failures", ""]
+            for nm, detail in failures:
+                lines += [f"### `{nm}`", "", "```", detail, "```", ""]
+
         with open(self.file, "w") as f:
             f.write("\n".join(lines))

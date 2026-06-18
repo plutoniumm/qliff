@@ -1,7 +1,7 @@
 # Circuit
 
-A `Circuit` is a stim-like instruction list: gates, noise, measurements,
-detectors and observables, recorded once and reused. You build it with the same
+A `Circuit` is a stim-like instruction list — gates, noise, measurements,
+detectors, and observables — recorded once and reused. Build it with the same
 uppercase methods as the [`Simulator`](/api), then run it, sample it, or hand it
 to a noise or QEC sampler.
 
@@ -51,8 +51,8 @@ Noise methods take the target(s) first, then the channel parameter. See
 ### Detectors and observables
 
 A **detector** is a set of measurement records whose parity is deterministic in
-the noiseless circuit; a **observable** is a logical degree of freedom tracked
-across the run. Record indices use stim's `rec[-1]` convention — negative indices
+the noiseless circuit. An **observable** is a logical degree of freedom tracked
+across the run. Record indices use stim's `rec[-1]` convention: negative indices
 count back from the measurements declared so far.
 
 | Method | Description |
@@ -75,26 +75,24 @@ c.observable(0, -1)
 | --- | --- | --- |
 | `run(seed=None)` | `Simulator` | apply a **noiseless** circuit and return the final state; raises if it contains noise |
 | `sample(shots, seed=None)` | `list[list[int]]` | measurement records over `shots` Pauli-noise trajectories |
-| `estimate(observable, shots=10000, method="auto", seed=None)` | `float` | reweighted estimate of $\langle O\rangle$ |
+| `estimate(observable, shots=10000, stratify=None, seed=None)` | `float` | reweighted estimate of $\langle O\rangle$ |
 | `detector_sampler()` | `DetectorSampler` | a sampler of detection events (see [QEC](/qec)) |
 | `dem()` | `DetectorErrorModel` | the detector error model (see [QEC](/qec)) |
 
-`estimate` chooses the sampler for you: plain Monte-Carlo when every channel is
-Pauli, otherwise the stratified importance sampler that stays unbiased for
-coherent and non-unitary noise. Override it with `method`:
+`estimate` reweights trajectories and is unbiased for any noise, including
+coherent and non-unitary channels. `stratify` chooses the variance strategy:
 
-| `method` | Sampler | Use when |
+| `stratify` | Behaviour | Use when |
 | --- | --- | --- |
-| `"auto"` | picks below | default |
-| `"montecarlo"` | `MonteCarlo` | all channels are Pauli |
-| `"importance"` | `ImportanceSampler` | flat importance sampling |
-| `"stratified"` | `StratifiedSampler` | general noise, lowest variance |
+| `None` | auto: flat for Pauli, stratified otherwise | default |
+| `False` | flat importance sampling | all channels are Pauli |
+| `True` | stratified by fault count $k$ | general noise, lowest variance |
 
 ```python
 c = Circuit(1)
 c.H(0).RZ(0, 0.3)
-c.estimate("X", 20000)          # ~ cos(0.3), auto-stratified
-c.estimate("X", 20000, method="importance")
+c.estimate("X", 20000)                  # ~ cos(0.3), auto-stratified
+c.estimate("X", 20000, stratify=False)  # force flat importance sampling
 ```
 
 ## Properties

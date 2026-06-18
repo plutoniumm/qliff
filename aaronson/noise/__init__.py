@@ -5,27 +5,23 @@ from .channel import (
     Channel,
     Depolarize1,
     Depolarize2,
-    PauliChannel1,
-    PauliChannel2,
+    PauliChannel,
     PauliRotation,
     PhaseFlip,
     make_channel,
 )
-from .sampler import ImportanceSampler, MonteCarlo, StratifiedSampler
+from .sampler import Sampler
 
 __all__ = [
     "Channel",
-    "PauliChannel1",
-    "PauliChannel2",
+    "PauliChannel",
     "PauliRotation",
     "AmplitudeDamping",
     "Depolarize1",
     "Depolarize2",
     "BitFlip",
     "PhaseFlip",
-    "MonteCarlo",
-    "ImportanceSampler",
-    "StratifiedSampler",
+    "Sampler",
     "NOISE_FACTORIES",
     "make_channel",
 ]

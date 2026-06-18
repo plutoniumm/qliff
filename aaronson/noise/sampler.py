@@ -4,99 +4,6 @@ from ..simulator import CLIFFORD_OPS, Simulator
 from .channel import make_channel
 
 
-class MonteCarlo:
-    """
-    Plain Monte-Carlo sampler: each trajectory runs the circuit on a fresh state,
-    drawing one Pauli branch per noise location. Pauli channels only -- coherent ones
-    raise and need ImportanceSampler.
-    """
-
-    def __init__(self, circuit):
-        self.circuit = circuit
-
-    def _apply(self, sim, name, targets, arg, rng):
-        if name in CLIFFORD_OPS:
-            getattr(sim, name)(*targets)
-
-            return
-        channel = make_channel(name, arg)
-        if not channel.is_pauli:
-            raise ValueError(f"{name} is not a Pauli channel; use ImportanceSampler")
-        _weight, ops = channel.sample(targets, rng)
-        for gate, qubits in ops:
-            getattr(sim, gate)(*qubits)
-
-    def _trajectory(self, rng):
-        sim = Simulator(self.circuit.num_qubits, rng.getrandbits(63))
-        for name, targets, arg in self.circuit.instructions:
-            self._apply(sim, name, targets, arg, rng)
-
-        return sim
-
-    def sample(self, shots, seed=None):
-        """
-        Run shots trajectories; return one measurement record (list of 0/1)
-        per shot.
-        """
-        rng = random.Random(seed)
-        out = []
-        for _ in range(shots):
-            out.append(self._trajectory(rng).measure_record)
-
-        return out
-
-    def expect(self, observable, shots, seed=None):
-        """
-        Estimate <O> by averaging a Pauli observable over trajectories.
-
-        The circuit should end without measurements; the observable is peeked on
-        each trajectory's final state.
-        """
-        rng = random.Random(seed)
-        total = 0.0
-        for _ in range(shots):
-            total += self._trajectory(rng).peek_observable(observable)
-
-        return total / shots
-
-
-class ImportanceSampler:
-    """
-    Importance sampler for general (quasiprobability) noise. Each trajectory draws
-    one branch per location and carries weight w = prod(sign * gamma); expect
-    returns mean(w * <O>), unbiased even for coherent channels (Pauli: w = 1).
-    """
-
-    def __init__(self, circuit):
-        self.circuit = circuit
-
-    def _trajectory(self, rng):
-        sim = Simulator(self.circuit.num_qubits, rng.getrandbits(63))
-        weight = 1.0
-        for name, targets, arg in self.circuit.instructions:
-            if name in CLIFFORD_OPS:
-                getattr(sim, name)(*targets)
-            else:
-                factor, ops = make_channel(name, arg).sample(targets, rng)
-                weight *= factor
-                for gate, qubits in ops:
-                    getattr(sim, gate)(*qubits)
-
-        return sim, weight
-
-    def expect(self, observable, shots, seed=None):
-        """
-        Estimate <O> over shots reweighted trajectories.
-        """
-        rng = random.Random(seed)
-        total = 0.0
-        for _ in range(shots):
-            sim, weight = self._trajectory(rng)
-            total += weight * sim.peek_observable(observable)
-
-        return total / shots
-
-
 def _poisson_binomial(phis):
     """
     P[k] = prob of exactly k successes over independent Bernoulli phis
@@ -113,35 +20,103 @@ def _poisson_binomial(phis):
     return probs
 
 
-class StratifiedSampler:
+class Sampler:
     """
-    Importance sampler stratified by fault count (variance reduction).
+    Trajectory sampler for a noisy circuit.
 
-    Estimate = sum_k P(k) F_k: P(k) the exact Poisson-binomial prob of k
-    faulty locations, F_k the importance estimate conditioned on k faults.
-    Lower variance than flat importance sampling at equal shots; unbiased for any
-    channels.
+    expect(): importance estimator, unbiased for ANY channel. On Pauli noise every
+    branch weight is 1, so it reduces to plain Monte-Carlo. stratify=True stratifies
+    by fault count (exact Poisson-binomial P(k)) for lower variance at equal shots.
+
+    sample(): per-shot measurement records. Pauli noise only -- a measured bitstring
+    cannot be reweighted by a negative quasiprobability, so a non-Pauli channel raises.
     """
 
     def __init__(self, circuit):
         self.circuit = circuit
-        self.locs = []
-        self.phis = []
-        for name, targets, arg in circuit.instructions:
+
+    def _apply(self, sim, name, targets, arg, rng):
+        if name in CLIFFORD_OPS:
+            getattr(sim, name)(*targets)
+
+            return
+        channel = make_channel(name, arg)
+        if not channel.is_pauli:
+            raise ValueError(f"{name} is not a Pauli channel; use expect()")
+        _weight, ops = channel.sample(targets, rng)
+        for gate, qubits in ops:
+            getattr(sim, gate)(*qubits)
+
+    def _record_trajectory(self, rng):
+        sim = Simulator(self.circuit.num_qubits, rng.getrandbits(63))
+        for name, targets, arg in self.circuit.instructions:
+            self._apply(sim, name, targets, arg, rng)
+
+        return sim
+
+    def sample(self, shots, seed=None):
+        """
+        Run shots trajectories; return one measurement record (list of 0/1)
+        per shot. Pauli noise only -- a non-Pauli channel raises.
+        """
+        rng = random.Random(seed)
+        out = []
+        for _ in range(shots):
+            out.append(self._record_trajectory(rng).record)
+
+        return out
+
+    def _weighted_trajectory(self, rng):
+        sim = Simulator(self.circuit.num_qubits, rng.getrandbits(63))
+        weight = 1.0
+        for name, targets, arg in self.circuit.instructions:
+            if name in CLIFFORD_OPS:
+                getattr(sim, name)(*targets)
+            else:
+                factor, ops = make_channel(name, arg).sample(targets, rng)
+                weight *= factor
+                for gate, qubits in ops:
+                    getattr(sim, gate)(*qubits)
+
+        return sim, weight
+
+    def expect(self, observable, shots, seed=None, stratify=False):
+        """
+        Estimate <observable>, unbiased for any channel. Each trajectory draws one
+        branch per noise location carrying weight w = prod(sign * gamma); estimate is
+        mean(w * <O>). stratify=True stratifies by fault count for lower variance.
+        """
+        if stratify:
+            return self._expect_stratified(observable, shots, seed)
+
+        rng = random.Random(seed)
+        total = 0.0
+        for _ in range(shots):
+            sim, weight = self._weighted_trajectory(rng)
+            total += weight * sim.peek(observable)
+
+        return total / shots
+
+    def _build_strata(self):
+        # Lazily compute the per-location branch data and Poisson-binomial P(k)
+        # used by stratified estimation; only paid when stratify=True is requested.
+        locs = []
+        phis = []
+        for name, targets, arg in self.circuit.instructions:
             if name in CLIFFORD_OPS:
                 continue
             branches = make_channel(name, arg).branches(targets)
             gamma = sum(abs(w) for w, _ in branches)
             gfault = sum(abs(w) for w, _ in branches[1:])
-            self.locs.append((branches, gamma))
-            self.phis.append(gfault / gamma if gamma > 0.0 else 0.0)
-        self.pk = _poisson_binomial(self.phis)
+            locs.append((branches, gamma))
+            phis.append(gfault / gamma if gamma > 0.0 else 0.0)
 
-    def _fault_set(self, k, rng):
+        return locs, phis, _poisson_binomial(phis)
+
+    def _fault_set(self, phis, k, rng):
         # sample exactly k faulty locations from the Poisson-binomial.
         # suffix[i][j] = prob locations i.. yield j faults (DP, built backwards);
         # then walk forward, including i with its conditional prob given faults left.
-        phis = self.phis
         a = len(phis)
         suffix = [[0.0] * (a + 1) for _ in range(a + 1)]
         suffix[a][0] = 1.0
@@ -178,8 +153,8 @@ class StratifiedSampler:
 
         return faults[-1][0]
 
-    def _shot(self, k, observable, rng):
-        faulty = self._fault_set(k, rng)
+    def _shot(self, locs, phis, k, observable, rng):
+        faulty = self._fault_set(phis, k, rng)
         sim = Simulator(self.circuit.num_qubits, rng.getrandbits(63))
         weight = 1.0
         loc = 0
@@ -187,7 +162,7 @@ class StratifiedSampler:
             if name in CLIFFORD_OPS:
                 getattr(sim, name)(*targets)
             else:
-                branches, gamma = self.locs[loc]
+                branches, gamma = locs[loc]
                 idx = self._pick_branch(branches, rng) if loc in faulty else 0
                 w, ops = branches[idx]
                 weight *= (1.0 if w >= 0.0 else -1.0) * gamma
@@ -195,19 +170,20 @@ class StratifiedSampler:
                     getattr(sim, gate)(*qubits)
                 loc += 1
 
-        return weight * sim.peek_observable(observable)
+        return weight * sim.peek(observable)
 
-    def expect(self, observable, shots, seed=None):
-        """
-        Stratified estimate of <O> using about shots trajectories.
-        """
+    def _expect_stratified(self, observable, shots, seed):
+        # Estimate = sum_k P(k) F_k: P(k) the exact Poisson-binomial prob of k
+        # faulty locations, F_k the importance estimate conditioned on k faults.
+        # Lower variance than flat importance sampling at equal shots.
+        locs, phis, pk = self._build_strata()
         rng = random.Random(seed)
         total = 0.0
-        for k, pk in enumerate(self.pk):
-            if pk <= 0.0:
+        for k, p in enumerate(pk):
+            if p <= 0.0:
                 continue
-            nk = max(1, round(shots * pk))
-            acc = sum(self._shot(k, observable, rng) for _ in range(nk))
-            total += pk * (acc / nk)
+            nk = max(1, round(shots * p))
+            acc = sum(self._shot(locs, phis, k, observable, rng) for _ in range(nk))
+            total += p * (acc / nk)
 
         return total

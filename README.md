@@ -26,12 +26,12 @@ Full documentation (quickstart, Simulator, Circuit, observables, noise, QEC) liv
 ## Clifford simulation
 
 ```python
-from aaronson import Simulator, state_fidelity
+from aaronson import Simulator, fidelity
 
 s = Simulator(2).H(0).CX(0, 1)
-s.canonical_stabilizers()              # ['+XX', '+ZZ']
-s.peek_observable("ZZ")                # +1   (read an expectation, no collapse)
-s.measure_pauli("XX")                  # (+1, False) — multi-qubit stabilizer measurement
+s.canon()              # ['+XX', '+ZZ']
+s.peek("ZZ")                # +1   (read an expectation, no collapse)
+s.measure("XX")                  # (+1, False) — multi-qubit stabilizer measurement
 
 m0, m1 = Simulator(2).H(0).CX(0, 1).M(0, 1)   # correlated: m0 == m1
 ```
@@ -46,12 +46,12 @@ s.H(1).CX(1, 2)
 s.CX(0, 1).H(0)
 
 # conditional gates
-if s.M(1):
+if s.M(1) == 1:
   s.X(2)
-if s.M(0):
+if s.M(0) == 1:
   s.Z(2)
 
-s.peek_observable("__X") # +1: teleported to qubit 2
+s.peek("__X") # +1: teleported to qubit 2
 ```
 
 ## Noise
@@ -79,9 +79,10 @@ c.X(0).AMPLITUDE_DAMP(0, 0.3)
 c.estimate("Z", 60000)                  # ≈ 2p - 1, matches the exact channel
 ```
 
-Override the auto choice with `c.estimate(obs, shots, method="importance")`, or drive a sampler
-directly: `from aaronson.noise import MonteCarlo, ImportanceSampler, StratifiedSampler`. Add a
-custom channel by subclassing `aaronson.noise.Channel` and dropping it in with `c.noise(ch, q)`.
+Force the variance strategy with `c.estimate(obs, shots, stratify=False)` (flat) or `stratify=True`
+(stratified), or drive the sampler directly: `from aaronson.noise import Sampler`, then
+`Sampler(c).expect(obs, shots, stratify=True)`. Add a custom channel by subclassing
+`aaronson.noise.Channel` and dropping it in with `c.noise(ch, q)`.
 
 ## Quantum error correction
 

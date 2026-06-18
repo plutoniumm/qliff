@@ -138,9 +138,6 @@ class PauliString:
 
     @classmethod
     def identity(cls, n):
-        """
-        The n-qubit identity Pauli.
-        """
         return cls([0] * n, [0] * n, 0)
 
     @classmethod
