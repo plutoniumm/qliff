@@ -1112,21 +1112,53 @@ impl ColTableau {
                     }
                 }
                 2 => {
+                    // Pauli-noise location. Rather than draw a branch for every
+                    // shot, sample only the FAULTY shots via geometric gaps
+                    // (rare-error sampling, like stim): with per-shot fault prob
+                    // phi the gaps between faults are geometric, so we touch
+                    // ~phi*shots shots, not all of them -- a ~1/phi win in the
+                    // QEC regime (phi ~ 1e-3). Degrades to per-shot as phi -> 1.
                     let table = &branches[x as usize];
                     let total: f64 = table.iter().map(|(w, _)| w.abs()).sum();
-                    for s in 0..shots {
-                        let thr = noise.next_f64() * total;
+                    let fault_weight: f64 = table
+                        .iter()
+                        .filter(|(_, ops)| !ops.is_empty())
+                        .map(|(w, _)| w.abs())
+                        .sum();
+                    if fault_weight <= 0.0 {
+                        continue; // identity-only channel: nothing flips
+                    }
+
+                    let ln1m = (1.0 - fault_weight / total).ln(); // <=0; -inf iff phi==1
+                    let mut s = 0usize;
+                    loop {
+                        let skip = if ln1m.is_finite() {
+                            ((1.0 - noise.next_f64()).ln() / ln1m) as usize
+                        } else {
+                            0 // phi == 1: every shot faults
+                        };
+                        s = s.saturating_add(skip);
+                        if s >= shots {
+                            break;
+                        }
+
+                        // pick a fault branch ~ |weight| among non-identity ones
+                        let thr = (1.0 - noise.next_f64()) * fault_weight;
                         let mut acc = 0.0;
-                        let mut pick = table.len() - 1;
-                        for (i, (w, _)) in table.iter().enumerate() {
+                        let mut chosen = &table[0].1;
+                        for (w, ops) in table.iter() {
+                            if ops.is_empty() {
+                                continue;
+                            }
                             acc += w.abs();
+                            chosen = ops;
                             if thr <= acc {
-                                pick = i;
                                 break;
                             }
                         }
+
                         let (word, bit) = (s >> 6, 1u64 << (s & 63));
-                        for &(op, qa, _qb) in &table[pick].1 {
+                        for &(op, qa, _qb) in chosen {
                             let fq = (qa as usize) * sw + word;
                             match op {
                                 3 => fx[fq] ^= bit,
@@ -1138,6 +1170,7 @@ impl ColTableau {
                                 _ => {}
                             }
                         }
+                        s += 1;
                     }
                 }
                 _ => {}
