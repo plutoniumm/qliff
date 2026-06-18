@@ -41,6 +41,11 @@ impl Rng {
 // (n * ceil(1024/64) u64 each) stay L2-resident.
 const FRAME_CHUNK: usize = 1024;
 
+// Shots per parallel chunk for the per-shot tableau sampler (sample_batch). Each
+// shot is ~1000x heavier than a frame shot (full tableau), so use a smaller chunk
+// for finer work-stealing granularity; one tableau alloc per chunk amortizes away.
+const BATCH_CHUNK: usize = 256;
+
 // Per-chunk noise seed: decorrelate (base, chunk) through the splitmix finalizer
 // so disjoint shot-chunks draw independent streams.
 fn chunk_seed(base: u64, chunk: u64) -> u64 {
@@ -203,6 +208,65 @@ fn frame_chunk(
         let base = s * num_meas;
         for (m, plane) in meas_planes.iter().enumerate() {
             out[base + m] = ((plane[word] >> bit) & 1) as u8;
+        }
+    }
+}
+
+// One shot-chunk of the per-shot tableau Monte-Carlo sampler (sample_batch's path,
+// used when a measurement is random so the frame method can't apply). Each chunk
+// owns a tableau (reset in place per shot) + its own coin/noise RNGs, so disjoint
+// chunks run in parallel; records written shot-major into `out`. Shots here are
+// fully independent -- no shared reference run -- so this scales near-linearly.
+fn batch_chunk(
+    instrs: &[(u8, u32, u32, u32)],
+    branches: &[Vec<(f64, Vec<(u8, u32, u32)>)>],
+    n: usize,
+    chunk_shots: usize,
+    coin_seed: u64,
+    noise_seed: u64,
+    out: &mut [u8],
+) {
+    let mut t = ColTableau::new(n, Some(coin_seed));
+    let mut noise = Rng::new(noise_seed);
+    let mut oi = 0usize;
+
+    for _ in 0..chunk_shots {
+        t.reset_to_zero();
+        t.inner.clear_record();
+
+        for &(kind, x, y, z) in instrs {
+            match kind {
+                0 => t.apply_gate(x as u8, y as usize, z as usize),
+                1 => match x {
+                    0 => {
+                        out[oi] = t.measure(y as usize, None) as u8;
+                        oi += 1;
+                    }
+                    1 => {
+                        out[oi] = t.mr(y as usize) as u8;
+                        oi += 1;
+                    }
+                    _ => t.reset(y as usize),
+                },
+                2 => {
+                    let table = &branches[x as usize];
+                    let total: f64 = table.iter().map(|(w, _)| w.abs()).sum();
+                    let thr = noise.next_f64() * total;
+                    let mut acc = 0.0;
+                    let mut pick = table.len() - 1;
+                    for (i, (w, _)) in table.iter().enumerate() {
+                        acc += w.abs();
+                        if thr <= acc {
+                            pick = i;
+                            break;
+                        }
+                    }
+                    for &(op, a, b) in &table[pick].1 {
+                        t.apply_gate(op, a as usize, b as usize);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -1105,75 +1169,50 @@ impl ColTableau {
     // Returns (flat shots*num_meas bytes, num_meas). Non-Pauli / unknown ops never
     // reach here (Python compiler falls back to its loop), so this stays Pauli-only.
     fn sample_batch(
-        &mut self,
-        instrs: Vec<(u8, u32, u32, u32)>,
-        branches: Vec<Vec<(f64, Vec<(u8, u32, u32)>)>>,
-        shots: usize,
-        seed: u64,
-    ) -> (Vec<u8>, usize) {
-        // Flat shots*num_meas buffer (PyO3 -> bytes; Python views it as a uint8
-        // (shots, num_meas) array -- no per-bit Python int objects to build).
-        // measurement coin and noise draws on independent streams
-        let num_meas = instrs.iter().filter(|&&(k, x, _, _)| k == 1 && x != 2).count();
-        self.inner.rng = Rng::new(seed);
-        let mut noise = Rng::new(seed.wrapping_add(0x9E37_79B9_7F4A_7C15));
-        let mut out: Vec<u8> = Vec::with_capacity(shots * num_meas);
-
-        for _ in 0..shots {
-            self.reset_to_zero();
-            self.inner.clear_record();
-
-            for &(kind, x, y, z) in &instrs {
-                match kind {
-                    0 => self.apply_gate(x as u8, y as usize, z as usize),
-                    1 => match x {
-                        0 => out.push(self.measure(y as usize, None) as u8),
-                        1 => out.push(self.mr(y as usize) as u8),
-                        _ => self.reset(y as usize),
-                    },
-                    2 => {
-                        let table = &branches[x as usize];
-                        let total: f64 = table.iter().map(|(w, _)| w.abs()).sum();
-                        let thr = noise.next_f64() * total;
-                        let mut acc = 0.0;
-                        let mut pick = table.len() - 1;
-                        for (i, (w, _)) in table.iter().enumerate() {
-                            acc += w.abs();
-                            if thr <= acc {
-                                pick = i;
-                                break;
-                            }
-                        }
-                        for &(op, a, b) in &table[pick].1 {
-                            self.apply_gate(op, a as usize, b as usize);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        (out, num_meas)
-    }
-
-    // Pauli-frame batch sampler -- the fast path when every measurement is
-    // DETERMINISTIC in the noiseless reference. Returns None (caller falls back
-    // to sample_batch) if any measurement is random: a genuine per-shot coin the
-    // frame method doesn't model. Otherwise: run the reference once (fixes the
-    // outcomes), then propagate bit-packed Pauli frames over `shots` shots (64
-    // shots / u64 word, sign-free), sampling noise as frame-bit flips; a
-    // measurement records ref_bit XOR frame_x[q] for all shots at once. The
-    // per-shot tableau re-run is gone -> the Wall-2 fix.
-    fn frame_sample(
         &self,
         instrs: Vec<(u8, u32, u32, u32)>,
         branches: Vec<Vec<(f64, Vec<(u8, u32, u32)>)>>,
         shots: usize,
         seed: u64,
-    ) -> Option<(Vec<u8>, usize)> {
-        let n = self.nq;
+    ) -> (Vec<u8>, usize) {
+        // Parallel over fixed-size shot chunks (BATCH_CHUNK), like frame_sample:
+        // each chunk owns a tableau + deterministic per-chunk coin/noise RNGs, so
+        // results are reproducible regardless of core count. No shared reference
+        // run here (shots are fully independent) -> near-linear scaling. Returns a
+        // flat shots*num_meas byte buffer (Python views it as a uint8 array).
+        let num_meas = instrs.iter().filter(|&&(k, x, _, _)| k == 1 && x != 2).count();
+        if num_meas == 0 || shots == 0 {
+            return (vec![0u8; shots * num_meas], num_meas);
+        }
 
-        // --- reference run (noiseless): record ref bits, bail if any is random ---
-        let mut refsim = RowTableau::new(n, Some(seed));
+        let n = self.nq;
+        let noise_base = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut out = vec![0u8; shots * num_meas];
+        out.par_chunks_mut(BATCH_CHUNK * num_meas)
+            .enumerate()
+            .for_each(|(c, slice)| {
+                batch_chunk(
+                    &instrs,
+                    &branches,
+                    n,
+                    slice.len() / num_meas,
+                    chunk_seed(seed, c as u64),
+                    chunk_seed(noise_base, c as u64),
+                    slice,
+                );
+            });
+
+        (out, num_meas)
+    }
+
+    // Noiseless reference run for the frame sampler: returns the deterministic
+    // measurement bits, or None if ANY measurement is random (caller then uses the
+    // per-shot sample_batch -- a genuine coin the frame method can't model). This
+    // is CIRCUIT-ONLY (seed-independent: a deterministic outcome doesn't flip the
+    // coin), so CompiledSampler computes it ONCE and reuses it across sample()
+    // calls -- amortizing this serial pass over a whole LER sweep.
+    fn frame_reference(&self, instrs: Vec<(u8, u32, u32, u32)>) -> Option<Vec<bool>> {
+        let mut refsim = RowTableau::new(self.nq, Some(0));
         let mut ref_bits: Vec<bool> = Vec::new();
         for &(kind, x, y, z) in &instrs {
             match kind {
@@ -1211,12 +1250,26 @@ impl ColTableau {
             }
         }
 
-        // --- frame engine: parallel over fixed-size shot chunks. rayon adapts to
-        // the core count; chunk size is fixed (FRAME_CHUNK) so the result is
-        // reproducible regardless of how many cores process it. ---
+        Some(ref_bits)
+    }
+
+    // Parallel Pauli-frame engine over `shots`, given a precomputed `ref_bits`
+    // (from frame_reference). Propagates bit-packed frames (64 shots/word,
+    // sign-free) + rare-error noise, recording ref_bit XOR frame_x[q]. Parallel
+    // over fixed-size shot chunks: rayon adapts to the core count; the chunk size
+    // is fixed (FRAME_CHUNK) so the result is reproducible regardless of cores.
+    fn frame_run(
+        &self,
+        instrs: Vec<(u8, u32, u32, u32)>,
+        branches: Vec<Vec<(f64, Vec<(u8, u32, u32)>)>>,
+        ref_bits: Vec<bool>,
+        shots: usize,
+        seed: u64,
+    ) -> (Vec<u8>, usize) {
+        let n = self.nq;
         let num_meas = ref_bits.len();
         if num_meas == 0 || shots == 0 {
-            return Some((vec![0u8; shots * num_meas], num_meas));
+            return (vec![0u8; shots * num_meas], num_meas);
         }
 
         let noise_base = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -1236,7 +1289,7 @@ impl ColTableau {
                 );
             });
 
-        Some((out, num_meas))
+        (out, num_meas)
     }
 
     #[pyo3(signature = (a, force=None))]

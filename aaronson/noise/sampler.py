@@ -11,6 +11,8 @@ from ..pauli import PauliString
 from ..simulator import CLIFFORD_OPS, GATE_OPCODE, GATES_1, GATES_2, Simulator
 from .channel import make_channel
 
+_UNSET = object()  # sentinel: CompiledSampler reference not computed yet
+
 
 def _compile_branches(branches: list[Branch]) -> list | None:
     # convert a channel's (weight, ops) branches to (weight, [(opcode, a, b), ...])
@@ -295,8 +297,10 @@ class CompiledSampler:
     def __init__(self, circuit: Circuit):
         self._sampler = Sampler(circuit)
         self._compiled = self._sampler._compile()
-        # reused across sample() calls; sample_batch resets it in place per shot
         self._core = None if self._compiled is None else ColTableau(circuit.num_qubits)
+        # cached noiseless reference (circuit-only): _UNSET until first sample();
+        # then None (a measurement is random -> sample_batch) or the ref bit list.
+        self._ref = _UNSET
 
     def sample(self, shots: int, seed: int | None = None) -> np.ndarray:
         if self._compiled is None:
@@ -305,14 +309,17 @@ class CompiledSampler:
         instrs, tables = self._compiled
         rng_seed = random.Random(seed).getrandbits(64)
 
-        # frame sampler (bit-packed over shots) is the fast path; it returns None
-        # when a measurement is random in the noiseless reference -> per-shot
-        # tableau re-run via sample_batch. Both hand back a flat (bytes, num_meas)
-        # we view as a uint8 (shots, num_meas) array -- no per-bit Python ints.
-        res = self._core.frame_sample(instrs, tables, shots, rng_seed)
-        if res is None:
-            res = self._core.sample_batch(instrs, tables, shots, rng_seed)
+        # The reference run is the frame sampler's one serial cost and depends only
+        # on the circuit -> compute it ONCE and reuse across calls (amortizes it
+        # over an LER sweep). None => a measurement is random => per-shot sample_batch.
+        if self._ref is _UNSET:
+            self._ref = self._core.frame_reference(instrs)
 
-        buf, num_meas = res
+        if self._ref is None:
+            buf, num_meas = self._core.sample_batch(instrs, tables, shots, rng_seed)
+        else:
+            buf, num_meas = self._core.frame_run(
+                instrs, tables, self._ref, shots, rng_seed
+            )
 
         return np.frombuffer(buf, dtype=np.uint8).reshape(shots, num_meas)
