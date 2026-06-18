@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
-from typing import TYPE_CHECKING, Self
+from typing import Self
 
 from ._types import Instruction, Targets
 from .noise.channel import NOISE_FACTORIES, Channel, make_channel
 from .pauli import PauliString
-from .simulator import CLIFFORD_OPS, Simulator
-
-if TYPE_CHECKING:
-    from .qec import DetectorErrorModel, DetectorSampler
+from .simulator import CLIFFORD_OPS, GATE_OPCODE, GATES_1, GATES_2, MEAS, Simulator
 
 
 class Circuit:
@@ -76,6 +73,37 @@ class Circuit:
 
         return self
 
+    # --- basis measurements / composite gates (sugar; expand to primitives, so
+    # run/sample/DEM handle them with no extra machinery) ---
+
+    def SX(self, *q: int) -> Self:
+        # sqrt-X = H S H
+        for x in q:
+            self.append("H", x).append("S", x).append("H", x)
+
+        return self
+
+    def SX_DAG(self, *q: int) -> Self:
+        for x in q:
+            self.append("H", x).append("S_DAG", x).append("H", x)
+
+        return self
+
+    def MX(self, *q: int) -> Self:
+        # measure in X basis (H; M; H) -- one record per qubit
+        for x in q:
+            self.append("H", x).append("M", x).append("H", x)
+
+        return self
+
+    def MY(self, *q: int) -> Self:
+        # measure in Y basis (S_DAG; H; M; H; S)
+        for x in q:
+            self.append("S_DAG", x).append("H", x).append("M", x)
+            self.append("H", x).append("S", x)
+
+        return self
+
     @property
     def is_pauli(self) -> bool:
         for name, _targets, arg in self.instructions:
@@ -89,12 +117,27 @@ class Circuit:
 
     def run(self, seed: int | None = None) -> Simulator:
         sim = Simulator(self.num_qubits, seed)
+        batch: list[tuple[int, int, int]] = []
 
         for name, targets, _arg in self.instructions:
-            if name in CLIFFORD_OPS:
+            if name in GATES_1:
+                op = GATE_OPCODE[name]
+                batch.extend((op, q, 0) for q in targets)
+            elif name in GATES_2:
+                op = GATE_OPCODE[name]
+                batch.extend(
+                    (op, targets[k], targets[k + 1]) for k in range(0, len(targets), 2)
+                )
+            elif name in MEAS:
+                if batch:
+                    sim.run_ops(batch)
+                    batch = []
                 getattr(sim, name)(*targets)
             else:
                 raise NotImplementedError(f"{name!r} is noise; use a sampler, not run")
+
+        if batch:
+            sim.run_ops(batch)
 
         return sim
 
@@ -102,6 +145,13 @@ class Circuit:
         from .noise import Sampler
 
         return Sampler(self).sample(shots, seed)
+
+    def compile_sampler(self):
+        # Reusable sampler: compile once, sample(shots) many times (amortizes the
+        # compile across repeated draws, e.g. logical-error-rate sweeps).
+        from .noise import CompiledSampler
+
+        return CompiledSampler(self)
 
     def estimate(
         self,
@@ -117,12 +167,14 @@ class Circuit:
 
         return Sampler(self).expect(observable, shots, seed=seed, stratify=stratify)
 
-    def detector_sampler(self) -> DetectorSampler:
+    def detector_sampler(self):
+        # DetectorSampler bound to this circuit (deferred import: qec needs Circuit)
         from .qec import DetectorSampler
 
         return DetectorSampler(self)
 
-    def dem(self) -> DetectorErrorModel:
+    def dem(self):
+        # first-order DetectorErrorModel for this circuit
         from .qec import DetectorErrorModel
 
         return DetectorErrorModel(self)

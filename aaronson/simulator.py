@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Self
 
-from ._core import Tableau
+from ._core import ColTableau
 from .pauli import PauliString, canonicalize, to_str
 
 # Instruction-name classes the Simulator executes directly (vs noise channels).
@@ -10,6 +10,14 @@ GATES_1 = {"H", "S", "S_DAG", "X", "Y", "Z"}
 GATES_2 = {"CX", "CNOT", "CZ", "SWAP"}
 MEAS = {"M", "MR", "R"}
 CLIFFORD_OPS = GATES_1 | GATES_2 | MEAS
+
+# gate name -> core opcode for the batched run() executor (see ColTableau::run)
+# fmt: off
+GATE_OPCODE = {
+    "H": 0, "S": 1, "S_DAG": 2, "X": 3, "Y": 4, "Z": 5,
+    "CX": 6, "CNOT": 6, "CZ": 7, "SWAP": 8,
+}
+# fmt: on
 
 
 def _flat(args: tuple) -> list[int]:
@@ -31,7 +39,7 @@ class Simulator:
     """
 
     def __init__(self, num_qubits: int, seed: int | None = None):
-        self._t = Tableau(num_qubits, seed)
+        self._t = ColTableau(num_qubits, seed)
 
     @property
     def num_qubits(self) -> int:
@@ -102,6 +110,58 @@ class Simulator:
         return self
 
     reset = R
+
+    def run_ops(self, ops: list[tuple[int, int, int]]) -> Self:
+        # Apply a compiled (opcode, a, b) gate batch in a single Rust call -- no
+        # per-gate Python dispatch. Opcodes come from GATE_OPCODE; Circuit.run
+        # builds the stream. Gates only (measurement breaks the col-major batch).
+        self._t.run(ops)
+
+        return self
+
+    # --- basis measurements / composite gates (sugar over primitives) ---
+
+    def SX(self, *q: int) -> Self:
+        # sqrt-X = H S H
+        for x in _flat(q):
+            self._t.h(x)
+            self._t.s(x)
+            self._t.h(x)
+
+        return self
+
+    def SX_DAG(self, *q: int) -> Self:
+        # sqrt-X dagger = H S_DAG H
+        for x in _flat(q):
+            self._t.h(x)
+            self._t.s_dag(x)
+            self._t.h(x)
+
+        return self
+
+    def MX(self, *q: int) -> int | list[int]:
+        # measure in X basis (H; M; H)
+        outs = []
+        for x in _flat(q):
+            self._t.h(x)
+            outs.append(int(self._t.measure(x, None)))
+            self._t.h(x)
+
+        return outs[0] if len(outs) == 1 else outs
+
+    def MY(self, *q: int) -> int | list[int]:
+        # measure in Y basis (S_DAG; H; M; H; S)
+        outs = []
+        for x in _flat(q):
+            self._t.s_dag(x)
+            self._t.h(x)
+            outs.append(int(self._t.measure(x, None)))
+            self._t.h(x)
+            self._t.s(x)
+
+        return outs[0] if len(outs) == 1 else outs
+
+    MZ = M
 
     def measure(
         self, pauli: PauliString | str, force: int | None = None

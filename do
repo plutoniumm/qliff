@@ -65,6 +65,25 @@ develop() {
   python setup.py build_ext --inplace
 }
 
+# compile the core in RELEASE (optimized), for benchmarking.
+# develop/build_ext produce DEBUG builds (~10-90x slower) -- never bench those.
+# -Ctarget-cpu=native tunes to THIS machine (SIMD, scheduling); kept out of
+# Cargo.toml so the PyPI wheel stays portable. lto/codegen-units/opt-level=3
+# come from [profile.release] in Cargo.toml.
+build_release() {
+  has python cargo rustc
+  cd "$ROOT"
+
+  cargo rustc --release --lib --manifest-path Cargo.toml \
+    --features pyo3/extension-module --crate-type cdylib -- \
+    -Ctarget-cpu=native \
+    -Clink-arg=-undefined \
+    -Clink-arg=dynamic_lookup \
+    -Clink-arg=-Wl,-install_name,@rpath/_core.abi3.so
+
+  cp target/release/lib_core.dylib aaronson/_core.abi3.so
+}
+
 build() {
   has python cargo rustc
   ensure_build_deps
@@ -79,7 +98,7 @@ test_() {
 }
 
 bench() {
-  develop
+  build_release
   pip install -q stim pymatching || true
   run_dir "$ROOT/base" soft
 }

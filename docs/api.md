@@ -11,7 +11,7 @@ from aaronson import Simulator, Circuit, PauliString, expectation, fidelity
 | [`Simulator`](#simulator) | The ergonomic, stim-style facade you will use most. |
 | `Circuit` | A stim-like IR with noise, detectors and observables — see [Noise](/noise) and [Error Correction](/qec). |
 | `PauliString`, `expectation`, `fidelity` | Pauli observables and metrics. |
-| `Tableau` | The lower-level native CHP tableau that `Simulator` wraps. |
+| `ColTableau` / `RowTableau` | The native CHP tableau cores `Simulator` wraps — column-major (fast gates) and row-major (fast measurement). |
 | `__version__` | The package version (sourced from the Rust crate). |
 
 This page documents `Simulator`.

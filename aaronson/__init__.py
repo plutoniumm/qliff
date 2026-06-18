@@ -1,5 +1,5 @@
 from . import noise, qec
-from ._core import Tableau, __version__
+from ._core import ColTableau, RowTableau, __version__
 from .circuit import Circuit
 from .metrics import expectation, fidelity
 from .pauli import PauliString
@@ -7,7 +7,8 @@ from .simulator import Simulator
 
 __all__ = [
     "__version__",
-    "Tableau",
+    "ColTableau",
+    "RowTableau",
     "Simulator",
     "PauliString",
     "Circuit",

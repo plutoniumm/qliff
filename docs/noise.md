@@ -34,8 +34,8 @@ weights); the last two are general (signed weights, `is_pauli = False`).
 
 | Channel | Circuit method | Arguments | Description |
 | --- | --- | --- | --- |
-| `Depolarize1(p)` | `DEPOLARIZE1(q, p)` | $p$ | $X,Y,Z$ each with probability $p/3$ |
-| `Depolarize2(p)` | `DEPOLARIZE2(pair, p)` | $p$ | the 15 two-qubit Paulis, each $p/15$ |
+| `Depolarize(p)` | `DEPOLARIZE1(q, p)` | $p$ | $X,Y,Z$ each with probability $p/3$ |
+| `Depolarize(p, twoq=True)` | `DEPOLARIZE2(pair, p)` | $p$ | the 15 two-qubit Paulis, each $p/15$ |
 | `BitFlip(p)` | `X_ERROR(q, p)` | $p$ | $X$ with probability $p$ |
 | `PhaseFlip(p)` | `Z_ERROR(q, p)` | $p$ | $Z$ with probability $p$ |
 | `PauliChannel(px, py, pz)` | `PAULI_CHANNEL_1(q, (px,py,pz))` | $p_x,p_y,p_z$ | arbitrary 1-qubit Pauli channel (`twoq=True` → 2-qubit depolarizing) |

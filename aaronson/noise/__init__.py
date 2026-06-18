@@ -3,25 +3,24 @@ from .channel import (
     AmplitudeDamping,
     BitFlip,
     Channel,
-    Depolarize1,
-    Depolarize2,
+    Depolarize,
     PauliChannel,
     PhaseFlip,
     Rotation,
     make_channel,
 )
-from .sampler import Sampler
+from .sampler import CompiledSampler, Sampler
 
 __all__ = [
     "Channel",
     "PauliChannel",
     "Rotation",
     "AmplitudeDamping",
-    "Depolarize1",
-    "Depolarize2",
+    "Depolarize",
     "BitFlip",
     "PhaseFlip",
     "Sampler",
+    "CompiledSampler",
     "NOISE_FACTORIES",
     "make_channel",
 ]

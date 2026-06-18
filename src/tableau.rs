@@ -26,6 +26,11 @@ impl Rng {
     fn next_bool(&mut self) -> bool {
         self.next_u64() >> 63 == 1
     }
+    #[inline]
+    fn next_f64(&mut self) -> f64 {
+        // 53-bit mantissa in [0, 1)
+        (self.next_u64() >> 11) as f64 / ((1u64 << 53) as f64)
+    }
 }
 
 // g = power of i when (x1,z1) * (x2,z2).
@@ -70,7 +75,7 @@ fn word_g(xi: u64, zi: u64, xh: u64, zh: u64) -> i32 {
 //   2N      scratch (for measurement stuff)
 #[pyclass]
 #[derive(Clone)]
-pub struct Tableau {
+pub struct RowTableau {
     nq: usize,
     // ceil(n/64): u64 words packed per row
     w: usize,
@@ -104,7 +109,7 @@ row 4  00000000  00000000  +   I
 
 But the plus and minus here would be stored as bits.
 */
-impl Tableau {
+impl RowTableau {
     #[inline]
     // I will not apologise for doing unhinged things
     fn get_x(&self, i: usize, j: usize) -> bool {
@@ -146,6 +151,24 @@ impl Tableau {
             self.zs[dst * self.w + k] = zv;
         }
         self.signs[dst] = self.signs[src];
+    }
+
+    // reset bits to |0...0> in place (reuse buffers; leaves rng + record alone).
+    fn reset_to_zero(&mut self) {
+        for v in self.xs.iter_mut() {
+            *v = 0;
+        }
+        for v in self.zs.iter_mut() {
+            *v = 0;
+        }
+        for s in self.signs.iter_mut() {
+            *s = 0;
+        }
+        let (n, w) = (self.nq, self.w);
+        for i in 0..n {
+            self.xs[i * w + (i >> 6)] |= 1u64 << (i & 63);
+            self.zs[(n + i) * w + (i >> 6)] |= 1u64 << (i & 63);
+        }
     }
 
     fn rowsum(&mut self, h: usize, i: usize) {
@@ -241,13 +264,13 @@ impl Tableau {
 }
 
 #[pymethods]
-impl Tableau {
+impl RowTableau {
     #[new]
     #[pyo3(signature = (n, seed=None))]
     fn new(n: usize, seed: Option<u64>) -> Self {
         let w = (n + 63) / 64;
         let rows = 2 * n + 1;
-        // default seed: wall-clock nanos XOR a per-process counter (unique per Tableau)
+        // default seed: wall-clock nanos XOR a per-process counter (unique per RowTableau)
         let seed = seed.unwrap_or_else(|| {
             let nanos = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -256,7 +279,7 @@ impl Tableau {
             let c = COUNTER.fetch_add(1, Ordering::Relaxed);
             nanos ^ c.wrapping_mul(0x9E37_79B9_7F4A_7C15)
         });
-        let mut t = Tableau {
+        let mut t = RowTableau {
             nq: n,
             w,
             xs: vec![0u64; rows * w],
@@ -522,11 +545,491 @@ impl Tableau {
         }
     }
 
-    fn copy(&self) -> Tableau {
+    fn copy(&self) -> RowTableau {
         self.clone()
     }
 
     fn __repr__(&self) -> String {
-        format!("Tableau(n={})", self.nq)
+        format!("RowTableau(n={})", self.nq)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ColTableau: column-major (qubit-major) bit planes for word-parallel gates,
+// transposed to the row-major engine (the `RowTableau` above, reused as `inner`)
+// for measurement. `layout` says which side is authoritative; we transpose
+// lazily, only when the op kind switches. A gate touches O(rows/64) words per
+// plane -- signs included -- instead of O(rows) scalar row touches: no cache
+// cliff, auto-vectorizable. Measurement delegates to the proven row-major path,
+// so its lead is preserved verbatim. Transpose is the naive O(rows*nq) form for
+// now (amortized: one per measurement round); 64x64 block transpose is the
+// later optimization.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq)]
+enum Layout {
+    Row,
+    Col,
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct ColTableau {
+    nq: usize,
+    // 2n+1 rows (n destab, n stab, 1 scratch)
+    rows: usize,
+    // ceil(n/64): words per row-major row
+    w: usize,
+    // ceil(rows/64): words per column plane
+    rw: usize,
+    // column-major planes over rows; column j -> words [j*rw .. (j+1)*rw)
+    xc: Vec<u64>,
+    zc: Vec<u64>,
+    // sign as a bit plane over rows
+    signc: Vec<u64>,
+    layout: Layout,
+    // row-major measurement engine; also owns the rng + record
+    inner: RowTableau,
+}
+
+impl ColTableau {
+    // make the row-major engine authoritative (measurement reads it).
+    fn to_row(&mut self) {
+        if self.layout == Layout::Row {
+            return;
+        }
+        let (w, rw) = (self.w, self.rw);
+        for v in self.inner.xs.iter_mut() {
+            *v = 0;
+        }
+        for v in self.inner.zs.iter_mut() {
+            *v = 0;
+        }
+        for j in 0..self.nq {
+            let cbase = j * rw;
+            let jw = j >> 6;
+            let jbit = 1u64 << (j & 63);
+            for r in 0..self.rows {
+                let cw = cbase + (r >> 6);
+                let rb = r & 63;
+                if (self.xc[cw] >> rb) & 1 == 1 {
+                    self.inner.xs[r * w + jw] |= jbit;
+                }
+                if (self.zc[cw] >> rb) & 1 == 1 {
+                    self.inner.zs[r * w + jw] |= jbit;
+                }
+            }
+        }
+        for r in 0..self.rows {
+            self.inner.signs[r] = ((self.signc[r >> 6] >> (r & 63)) & 1) as u8;
+        }
+        self.layout = Layout::Row;
+    }
+
+    // make the column-major planes authoritative (gates touch them).
+    fn to_col(&mut self) {
+        if self.layout == Layout::Col {
+            return;
+        }
+        let (w, rw) = (self.w, self.rw);
+        for v in self.xc.iter_mut() {
+            *v = 0;
+        }
+        for v in self.zc.iter_mut() {
+            *v = 0;
+        }
+        for v in self.signc.iter_mut() {
+            *v = 0;
+        }
+        for r in 0..self.rows {
+            let rbase = r * w;
+            let rword = r >> 6;
+            let rbit = 1u64 << (r & 63);
+            for j in 0..self.nq {
+                let rwd = rbase + (j >> 6);
+                let jb = j & 63;
+                if (self.inner.xs[rwd] >> jb) & 1 == 1 {
+                    self.xc[j * rw + rword] |= rbit;
+                }
+                if (self.inner.zs[rwd] >> jb) & 1 == 1 {
+                    self.zc[j * rw + rword] |= rbit;
+                }
+            }
+            if self.inner.signs[r] != 0 {
+                self.signc[rword] |= rbit;
+            }
+        }
+        self.layout = Layout::Col;
+    }
+
+    // The one place col-major gate logic lives. Raw whole-plane op by opcode
+    // (0=H 1=S 2=S_DAG 3=X 4=Y 5=Z 6=CX 7=CZ 8=SWAP); b unused for 1-qubit.
+    // Caller must already be in Col layout (gates/run/apply_gate ensure it).
+    // #[inline] so the dispatch folds back into run()'s hot loop (single source,
+    // no call overhead per gate).
+    #[inline]
+    fn gate(&mut self, op: u8, a: usize, b: usize) {
+        let rw = self.rw;
+        let base = a * rw;
+        match op {
+            // H: swap x<->z; sign ^= x & z
+            0 => {
+                for k in 0..rw {
+                    let xa = self.xc[base + k];
+                    let za = self.zc[base + k];
+                    self.signc[k] ^= xa & za;
+                    self.xc[base + k] = za;
+                    self.zc[base + k] = xa;
+                }
+            }
+            // S: z ^= x; sign ^= x & z (z read before update)
+            1 => {
+                for k in 0..rw {
+                    let xa = self.xc[base + k];
+                    let za = self.zc[base + k];
+                    self.signc[k] ^= xa & za;
+                    self.zc[base + k] = za ^ xa;
+                }
+            }
+            // S-dagger: z ^= x; sign ^= x & !z
+            2 => {
+                for k in 0..rw {
+                    let xa = self.xc[base + k];
+                    let za = self.zc[base + k];
+                    self.signc[k] ^= xa & !za;
+                    self.zc[base + k] = za ^ xa;
+                }
+            }
+            // X: sign ^= z
+            3 => {
+                for k in 0..rw {
+                    self.signc[k] ^= self.zc[base + k];
+                }
+            }
+            // Y: sign ^= x ^ z
+            4 => {
+                for k in 0..rw {
+                    self.signc[k] ^= self.xc[base + k] ^ self.zc[base + k];
+                }
+            }
+            // Z: sign ^= x
+            5 => {
+                for k in 0..rw {
+                    self.signc[k] ^= self.xc[base + k];
+                }
+            }
+            // CNOT a->b: x_b ^= x_a; z_a ^= z_b; sign ^= x_a & z_b & (x_b ^ z_a ^ 1)
+            6 => {
+                let rb = b * rw;
+                for k in 0..rw {
+                    let xa = self.xc[base + k];
+                    let za = self.zc[base + k];
+                    let xb = self.xc[rb + k];
+                    let zb = self.zc[rb + k];
+                    self.signc[k] ^= xa & zb & (xb ^ za ^ !0u64);
+                    self.xc[rb + k] = xb ^ xa;
+                    self.zc[base + k] = za ^ zb;
+                }
+            }
+            // CZ (symmetric): z_a ^= x_b; z_b ^= x_a; sign ^= x_a & x_b & (z_a ^ z_b)
+            7 => {
+                let rb = b * rw;
+                for k in 0..rw {
+                    let xa = self.xc[base + k];
+                    let za = self.zc[base + k];
+                    let xb = self.xc[rb + k];
+                    let zb = self.zc[rb + k];
+                    self.signc[k] ^= xa & xb & (za ^ zb);
+                    self.zc[base + k] = za ^ xb;
+                    self.zc[rb + k] = zb ^ xa;
+                }
+            }
+            8 => {
+                self.gate(6, a, b);
+                self.gate(6, b, a);
+                self.gate(6, a, b);
+            }
+            _ => {}
+        }
+    }
+
+    // ensure Col layout, then apply one gate (for the interleaved sample loop).
+    fn apply_gate(&mut self, op: u8, a: usize, b: usize) {
+        self.to_col();
+        self.gate(op, a, b);
+    }
+
+    // reset to |0...0> in place; col planes go stale (rebuilt lazily on to_col).
+    fn reset_to_zero(&mut self) {
+        self.inner.reset_to_zero();
+        self.layout = Layout::Row;
+    }
+}
+
+#[pymethods]
+impl ColTableau {
+    #[new]
+    #[pyo3(signature = (n, seed=None))]
+    fn new(n: usize, seed: Option<u64>) -> Self {
+        let rows = 2 * n + 1;
+        let rw = (rows + 63) / 64;
+        ColTableau {
+            nq: n,
+            rows,
+            w: (n + 63) / 64,
+            rw,
+            xc: vec![0u64; n * rw],
+            zc: vec![0u64; n * rw],
+            signc: vec![0u64; rw],
+            // inner carries the |0...0> init; first gate transposes it to col
+            layout: Layout::Row,
+            inner: RowTableau::new(n, seed),
+        }
+    }
+
+    #[getter]
+    fn n(&self) -> usize {
+        self.nq
+    }
+
+    // 1- and 2-qubit gates: ensure Col layout, then the shared `gate` core.
+    fn h(&mut self, a: usize) {
+        self.to_col();
+        self.gate(0, a, 0);
+    }
+
+    fn s(&mut self, a: usize) {
+        self.to_col();
+        self.gate(1, a, 0);
+    }
+
+    fn s_dag(&mut self, a: usize) {
+        self.to_col();
+        self.gate(2, a, 0);
+    }
+
+    fn x(&mut self, a: usize) {
+        self.to_col();
+        self.gate(3, a, 0);
+    }
+
+    fn y(&mut self, a: usize) {
+        self.to_col();
+        self.gate(4, a, 0);
+    }
+
+    fn z(&mut self, a: usize) {
+        self.to_col();
+        self.gate(5, a, 0);
+    }
+
+    fn cx(&mut self, a: usize, b: usize) {
+        self.to_col();
+        self.gate(6, a, b);
+    }
+
+    fn cz(&mut self, a: usize, b: usize) {
+        self.to_col();
+        self.gate(7, a, b);
+    }
+
+    fn swap(&mut self, a: usize, b: usize) {
+        self.to_col();
+        self.gate(8, a, b);
+    }
+
+    // Apply a compiled (opcode, a, b) gate stream in one call: one to_col for the
+    // whole batch -> no per-gate Python dispatch. Gate bodies are INLINED here
+    // (not via gate()) so this hot batched loop stays fast -- gate() is too big to
+    // inline, and calling it per op costs ~1.7x at large n. The pymethods and
+    // apply_gate still share gate() for DRY; only this hot loop duplicates it.
+    fn run(&mut self, ops: Vec<(u8, u32, u32)>) {
+        self.to_col();
+        let rw = self.rw;
+        for (op, a, b) in ops {
+            let base = (a as usize) * rw;
+            match op {
+                0 => {
+                    for k in 0..rw {
+                        let xa = self.xc[base + k];
+                        let za = self.zc[base + k];
+                        self.signc[k] ^= xa & za;
+                        self.xc[base + k] = za;
+                        self.zc[base + k] = xa;
+                    }
+                }
+                1 => {
+                    for k in 0..rw {
+                        let xa = self.xc[base + k];
+                        let za = self.zc[base + k];
+                        self.signc[k] ^= xa & za;
+                        self.zc[base + k] = za ^ xa;
+                    }
+                }
+                2 => {
+                    for k in 0..rw {
+                        let xa = self.xc[base + k];
+                        let za = self.zc[base + k];
+                        self.signc[k] ^= xa & !za;
+                        self.zc[base + k] = za ^ xa;
+                    }
+                }
+                3 => {
+                    for k in 0..rw {
+                        self.signc[k] ^= self.zc[base + k];
+                    }
+                }
+                4 => {
+                    for k in 0..rw {
+                        self.signc[k] ^= self.xc[base + k] ^ self.zc[base + k];
+                    }
+                }
+                5 => {
+                    for k in 0..rw {
+                        self.signc[k] ^= self.xc[base + k];
+                    }
+                }
+                6 => {
+                    let rb = (b as usize) * rw;
+                    for k in 0..rw {
+                        let xa = self.xc[base + k];
+                        let za = self.zc[base + k];
+                        let xb = self.xc[rb + k];
+                        let zb = self.zc[rb + k];
+                        self.signc[k] ^= xa & zb & (xb ^ za ^ !0u64);
+                        self.xc[rb + k] = xb ^ xa;
+                        self.zc[base + k] = za ^ zb;
+                    }
+                }
+                7 => {
+                    let rb = (b as usize) * rw;
+                    for k in 0..rw {
+                        let xa = self.xc[base + k];
+                        let za = self.zc[base + k];
+                        let xb = self.xc[rb + k];
+                        let zb = self.zc[rb + k];
+                        self.signc[k] ^= xa & xb & (za ^ zb);
+                        self.zc[base + k] = za ^ xb;
+                        self.zc[rb + k] = zb ^ xa;
+                    }
+                }
+                8 => self.swap(a as usize, b as usize),
+                _ => {}
+            }
+        }
+    }
+
+    // Batched Pauli-noise trajectory sampler (the fast path for Circuit.sample).
+    // instrs: (kind, x, y, z) with
+    //   kind 0 = gate(opcode=x, a=y, b=z)
+    //   kind 1 = measure(sub=x: 0=M 1=MR 2=R, qubit=y) -- M/MR push a record bit
+    //   kind 2 = noise(branch_table=x); pick one branch ~ |weight|, apply its ops
+    // branches[i] = [(weight, [(opcode,a,b), ...]), ...] (precompiled in Python).
+    // One reused tableau, reset in place per shot; no per-gate Python dispatch.
+    // Returns shots x record-length 0/1. Non-Pauli / unknown ops never reach here
+    // (Python compiler falls back to its loop), so this stays Pauli-only.
+    fn sample_batch(
+        &mut self,
+        instrs: Vec<(u8, u32, u32, u32)>,
+        branches: Vec<Vec<(f64, Vec<(u8, u32, u32)>)>>,
+        shots: usize,
+        seed: u64,
+    ) -> Vec<Vec<i64>> {
+        // i64 (not u8) so PyO3 yields list[list[int]], not list[bytes].
+        // measurement coin and noise draws on independent streams
+        self.inner.rng = Rng::new(seed);
+        let mut noise = Rng::new(seed.wrapping_add(0x9E37_79B9_7F4A_7C15));
+        let mut out = Vec::with_capacity(shots);
+
+        for _ in 0..shots {
+            self.reset_to_zero();
+            self.inner.clear_record();
+            let mut rec = Vec::new();
+
+            for &(kind, x, y, z) in &instrs {
+                match kind {
+                    0 => self.apply_gate(x as u8, y as usize, z as usize),
+                    1 => match x {
+                        0 => rec.push(self.measure(y as usize, None) as i64),
+                        1 => rec.push(self.mr(y as usize) as i64),
+                        _ => self.reset(y as usize),
+                    },
+                    2 => {
+                        let table = &branches[x as usize];
+                        let total: f64 = table.iter().map(|(w, _)| w.abs()).sum();
+                        let thr = noise.next_f64() * total;
+                        let mut acc = 0.0;
+                        let mut pick = table.len() - 1;
+                        for (i, (w, _)) in table.iter().enumerate() {
+                            acc += w.abs();
+                            if thr <= acc {
+                                pick = i;
+                                break;
+                            }
+                        }
+                        for &(op, a, b) in &table[pick].1 {
+                            self.apply_gate(op, a as usize, b as usize);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            out.push(rec);
+        }
+        out
+    }
+
+    #[pyo3(signature = (a, force=None))]
+    fn measure(&mut self, a: usize, force: Option<bool>) -> bool {
+        self.to_row();
+        self.inner.measure(a, force)
+    }
+
+    fn mr(&mut self, a: usize) -> bool {
+        self.to_row();
+        self.inner.mr(a)
+    }
+
+    fn reset(&mut self, a: usize) {
+        self.to_row();
+        self.inner.reset(a);
+    }
+
+    #[getter]
+    fn record(&self) -> Vec<bool> {
+        self.inner.record()
+    }
+
+    fn clear_record(&mut self) {
+        self.inner.clear_record();
+    }
+
+    fn stabilizers(&mut self) -> Vec<(bool, Vec<u8>, Vec<u8>)> {
+        self.to_row();
+        self.inner.stabilizers()
+    }
+
+    fn destabilizers(&mut self) -> Vec<(bool, Vec<u8>, Vec<u8>)> {
+        self.to_row();
+        self.inner.destabilizers()
+    }
+
+    fn expectation(&mut self, px: Vec<u8>, pz: Vec<u8>) -> i8 {
+        self.to_row();
+        self.inner.expectation(px, pz)
+    }
+
+    #[pyo3(signature = (px, pz, force=None))]
+    fn measure_pauli(&mut self, px: Vec<u8>, pz: Vec<u8>, force: Option<bool>) -> (bool, bool) {
+        self.to_row();
+        self.inner.measure_pauli(px, pz, force)
+    }
+
+    fn copy(&self) -> ColTableau {
+        self.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ColTableau(n={})", self.nq)
     }
 }

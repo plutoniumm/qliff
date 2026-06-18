@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -9,8 +8,7 @@ from .._types import Targets
 from ..noise.channel import make_channel
 from ..simulator import CLIFFORD_OPS, Simulator
 
-if TYPE_CHECKING:
-    from ..circuit import Circuit
+from ..circuit import Circuit
 
 
 class DetectorSampler:

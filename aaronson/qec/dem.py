@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -8,8 +7,7 @@ from .._types import Bits, Op, Targets
 from ..noise.channel import make_channel
 from ..simulator import CLIFFORD_OPS, GATES_1, GATES_2
 
-if TYPE_CHECKING:
-    from ..circuit import Circuit
+from ..circuit import Circuit
 
 _PAULI_BITS = {
     "X": (1, 0),

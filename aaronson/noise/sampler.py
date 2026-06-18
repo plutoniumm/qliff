@@ -1,15 +1,31 @@
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING
 
-from .._types import Branch, Targets
+from .._core import ColTableau
+from .._types import Branch
+from ..circuit import Circuit
 from ..pauli import PauliString
-from ..simulator import CLIFFORD_OPS, Simulator
+from ..simulator import CLIFFORD_OPS, GATE_OPCODE, GATES_1, GATES_2, Simulator
 from .channel import make_channel
 
-if TYPE_CHECKING:
-    from ..circuit import Circuit
+
+def _compile_branches(branches: list[Branch]) -> list | None:
+    # convert a channel's (weight, ops) branches to (weight, [(opcode, a, b), ...])
+    # for the Rust sampler; None if any branch op has no core opcode.
+    table = []
+    for weight, ops in branches:
+        cops = []
+        for gate, qubits in ops:
+            code = GATE_OPCODE.get(gate)
+            if code is None:
+                return None
+
+            b = qubits[1] if len(qubits) == 2 else 0
+            cops.append((code, qubits[0], b))
+        table.append((float(weight), cops))
+
+    return table
 
 
 def _poisson_binomial(phis: list[float]) -> list[float]:
@@ -41,45 +57,74 @@ class Sampler:
     def __init__(self, circuit: Circuit):
         self.circuit = circuit
 
-    def _apply(
-        self,
-        sim: Simulator,
-        name: str,
-        targets: Targets,
-        arg: object,
-        rng: random.Random,
-    ) -> None:
-        if name in CLIFFORD_OPS:
-            getattr(sim, name)(*targets)
-
-            return
-
-        channel = make_channel(name, arg)
-
-        if not channel.is_pauli:
-            raise ValueError(f"{name} is not a Pauli channel; use expect()")
-        _weight, ops = channel.sample(targets, rng)
-
-        for gate, qubits in ops:
-            getattr(sim, gate)(*qubits)
-
-    def _record_trajectory(self, rng: random.Random) -> Simulator:
-        sim = Simulator(self.circuit.num_qubits, rng.getrandbits(63))
+    def _compile(self) -> tuple[list, list] | None:
+        # Lower the circuit to the Rust batched sampler: a flat instruction stream
+        # (kind, x, y, z) plus per-noise-op Pauli branch tables. Return None (->
+        # Python fallback) for any non-Pauli channel or a branch op with no opcode
+        # (e.g. a custom Channel emitting a gate the core doesn't know).
+        instrs = []
+        tables = []
 
         for name, targets, arg in self.circuit.instructions:
-            self._apply(sim, name, targets, arg, rng)
+            if name in GATES_1:
+                op = GATE_OPCODE[name]
+                instrs.extend((0, op, q, 0) for q in targets)
+            elif name in GATES_2:
+                op = GATE_OPCODE[name]
+                instrs.extend(
+                    (0, op, targets[k], targets[k + 1])
+                    for k in range(0, len(targets), 2)
+                )
+            elif name == "M":
+                instrs.extend((1, 0, q, 0) for q in targets)
+            elif name == "MR":
+                instrs.extend((1, 1, q, 0) for q in targets)
+            elif name == "R":
+                instrs.extend((1, 2, q, 0) for q in targets)
+            else:
+                channel = make_channel(name, arg)
+                if not channel.is_pauli:
+                    return None
 
-        return sim
+                table = _compile_branches(channel.branches(targets))
+                if table is None:
+                    return None
+
+                instrs.append((2, len(tables), 0, 0))
+                tables.append(table)
+
+        return instrs, tables
 
     def sample(self, shots: int, seed: int | None = None) -> list[list[int]]:
         """
         Run shots trajectories; one measurement record (0/1 list) per shot.
-        Pauli noise only -- a non-Pauli channel raises.
+        Pauli noise only -- a non-Pauli channel raises. Built-in Pauli noise runs
+        in the Rust batched sampler; a custom channel falls back to Python.
         """
+        return CompiledSampler(self.circuit).sample(shots, seed)
+
+    def _sample_python(self, shots: int, seed: int | None) -> list[list[int]]:
+        # Fallback: one tableau per shot in Python, but each Channel built once
+        # (not per shot). Used when _compile can't lower the circuit.
+        prepared = [
+            (name, targets, None if name in CLIFFORD_OPS else make_channel(name, arg))
+            for name, targets, arg in self.circuit.instructions
+        ]
         rng = random.Random(seed)
         out = []
+
         for _ in range(shots):
-            out.append(self._record_trajectory(rng).record)
+            sim = Simulator(self.circuit.num_qubits, rng.getrandbits(63))
+            for name, targets, channel in prepared:
+                if channel is None:
+                    getattr(sim, name)(*targets)
+                    continue
+                if not channel.is_pauli:
+                    raise ValueError(f"{name} is not a Pauli channel; use expect()")
+                _weight, ops = channel.sample(targets, rng)
+                for gate, qubits in ops:
+                    getattr(sim, gate)(*qubits)
+            out.append(sim.record)
 
         return out
 
@@ -168,9 +213,13 @@ class Sampler:
         return chosen
 
     def _pick_branch(self, branches: list[Branch], rng: random.Random) -> int:
+        # fmt: off
         faults = [
-            (i + 1, w, ops) for i, (w, ops) in enumerate(branches[1:]) if w != 0.0
+            (i + 1, w, ops)
+                for i, (w, ops) in enumerate(branches[1:])
+                if w != 0.0
         ]
+        # fmt: on
         threshold = rng.random() * sum(abs(w) for _, w, _ in faults)
 
         acc = 0.0
@@ -224,8 +273,33 @@ class Sampler:
         for k, p in enumerate(pk):
             if p <= 0.0:
                 continue
+
             nk = max(1, round(shots * p))
             acc = sum(self._shot(locs, phis, k, observable, rng) for _ in range(nk))
             total += p * (acc / nk)
 
         return total
+
+
+class CompiledSampler:
+    """
+    Reusable sampler: lower the circuit to the Rust batched sampler once, then
+    sample(shots) repeatedly without recompiling -- amortizes the compile across
+    calls (e.g. logical-error-rate sweeps). Built-in Pauli noise runs in Rust; a
+    custom / non-Pauli channel falls back to the Python loop, like Sampler.sample.
+    """
+
+    def __init__(self, circuit: Circuit):
+        self._sampler = Sampler(circuit)
+        self._compiled = self._sampler._compile()
+        # reused across sample() calls; sample_batch resets it in place per shot
+        self._core = None if self._compiled is None else ColTableau(circuit.num_qubits)
+
+    def sample(self, shots: int, seed: int | None = None) -> list[list[int]]:
+        if self._compiled is None:
+            return self._sampler._sample_python(shots, seed)
+
+        instrs, tables = self._compiled
+        rng_seed = random.Random(seed).getrandbits(64)
+
+        return self._core.sample_batch(instrs, tables, shots, rng_seed)

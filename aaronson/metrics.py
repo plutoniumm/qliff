@@ -17,6 +17,7 @@ def fidelity(a: Simulator, b: Simulator) -> float:
     overlap = 1.0
     for gen in a.stabilizers():
         value, random = work.measure(gen, force=1)
+
         if random:
             overlap *= 0.5
         elif value != 1:

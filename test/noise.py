@@ -100,7 +100,7 @@ class NoiseTests(Question):
 
     def test_full_depolarize_randomizes(self):
         """
-        Depolarize1(0.75) on |0> gives a Z outcome that is ~50:50.
+        Depolarize(0.75) on |0> gives a Z outcome that is ~50:50.
 
         I and Z keep the 0 outcome, X and Y flip it, so P(1) = 0.5.
         """

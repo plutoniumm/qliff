@@ -173,14 +173,12 @@ class AmplitudeDamping(Channel):
         ]
 
 
-def Depolarize1(p: float) -> PauliChannel:
-    # 1Q depol p/3
+def Depolarize(p: float, twoq: bool = False) -> PauliChannel:
+    # depol: 1Q over {X,Y,Z} at p/3, or 2Q over the 15 Pauli pairs at p/15
+    if twoq:
+        return PauliChannel(p, twoq=True)
+
     return PauliChannel(p / 3.0, p / 3.0, p / 3.0)
-
-
-def Depolarize2(p: float) -> PauliChannel:
-    # 2Q depol p/15
-    return PauliChannel(p, twoq=True)
 
 
 def BitFlip(p: float) -> PauliChannel:
@@ -194,8 +192,8 @@ def PhaseFlip(p: float) -> PauliChannel:
 
 
 NOISE_FACTORIES = {
-    "DEPOLARIZE1": Depolarize1,
-    "DEPOLARIZE2": Depolarize2,
+    "DEPOLARIZE1": Depolarize,
+    "DEPOLARIZE2": lambda arg: Depolarize(arg, twoq=True),
     "X_ERROR": BitFlip,
     "Z_ERROR": PhaseFlip,
     "PAULI_CHANNEL_1": lambda arg: PauliChannel(*arg),
