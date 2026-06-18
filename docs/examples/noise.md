@@ -18,7 +18,7 @@ c = Circuit(1)
 c.X_ERROR(0, 0.25)
 c.M(0)
 
-records = Sampler(c).sample(5000, seed=0)   # list[list[int]]
+records = Sampler(c).sample(5000, seed=0)
 ones = sum(r[0] for r in records) / 5000    # ~ 0.25
 ```
 
@@ -34,7 +34,7 @@ from aaronson import Circuit
 from aaronson.noise import Sampler
 
 c = Circuit(1)
-c.H(0)                       # |+>, so <X> = 1 without noise
+c.H(0)
 c.DEPOLARIZE1(0, 0.1)
 
 est = Sampler(c).expect("X", 5000, seed=0)   # ~ 1 - 4p/3 = 0.867
@@ -53,7 +53,7 @@ from aaronson import Circuit
 from aaronson.noise import Sampler
 
 c = Circuit(1)
-c.H(0).RZ(0, 0.3)            # |+> rotated by theta about Z
+c.H(0).RZ(0, 0.3)
 
 est = Sampler(c).expect("X", 20000, seed=0)   # ~ cos(0.3) = 0.955
 ```
@@ -72,7 +72,7 @@ from aaronson.noise import Sampler
 c = Circuit(1)
 c.H(0).RZ(0, 0.3)
 
-est = Sampler(c).expect("X", 20000, seed=0, stratify=True)   # ~ cos(0.3), tighter
+est = Sampler(c).expect("X", 20000, seed=0, stratify=True)   # ~ cos(0.3)
 ```
 
 Same $\cos\theta$ target, smaller error bars at equal shots. (Or just call

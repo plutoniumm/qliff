@@ -39,7 +39,7 @@ weights); the last two are general (signed weights, `is_pauli = False`).
 | `BitFlip(p)` | `X_ERROR(q, p)` | $p$ | $X$ with probability $p$ |
 | `PhaseFlip(p)` | `Z_ERROR(q, p)` | $p$ | $Z$ with probability $p$ |
 | `PauliChannel(px, py, pz)` | `PAULI_CHANNEL_1(q, (px,py,pz))` | $p_x,p_y,p_z$ | arbitrary 1-qubit Pauli channel (`twoq=True` → 2-qubit depolarizing) |
-| `PauliRotation(axis, theta)` | `RZ(q, theta)` / `RX(q, theta)` | axis, $\theta$ | coherent rotation $e^{-i\theta P/2}$ |
+| `Rotation(axis, theta)` | `RZ(q, theta)` / `RX(q, theta)` | axis, $\theta$ | coherent rotation $e^{-i\theta P/2}$ |
 | `AmplitudeDamping(p)` | `AMPLITUDE_DAMP(q, p)` | $p$ | energy decay $\|1\rangle\to\|0\rangle$ |
 
 ### Amplitude damping
@@ -76,8 +76,8 @@ from aaronson.noise import Sampler
 c = Circuit(1)
 c.H(0).RZ(0, 0.3)
 
-Sampler(c).expect("X", 20000)                 # unbiased
-Sampler(c).expect("X", 20000, stratify=True)  # same value, lower variance
+Sampler(c).expect("X", 20000)
+Sampler(c).expect("X", 20000, stratify=True)
 ```
 
 `sample` is Pauli-only: a measured bitstring cannot be reweighted by a negative

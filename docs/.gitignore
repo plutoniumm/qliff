@@ -1,9 +1,6 @@
-# VitePress build output + cache
 .vitepress/cache/
 .vitepress/dist/
 node_modules/
 
-# Generated "exam" test reports (written by `MDR_OUT=docs/tests ./do test`).
-# index.md is hand-written and kept under version control.
 tests/*.md
 !tests/index.md

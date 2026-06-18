@@ -46,9 +46,6 @@ rep = repetition_code(distance=3, rounds=3, p=0.05)
 dem = rep.dem()
 
 H, priors, obs_matrix = dem.check_matrix()
-# H:          (n_detectors x n_mechanisms) uint8 parity-check matrix
-# priors:     per-mechanism fault probabilities
-# obs_matrix: (n_observables x n_mechanisms) uint8
 ```
 
 `H` is detectors $\times$ mechanisms; `priors` carries each mechanism's

@@ -56,7 +56,6 @@ Each returns `self`. Accepts one or more targets.
 ```python
 from aaronson import Simulator
 
-# S maps X -> Y, so H then S takes |0> to the +Y eigenstate.
 print(Simulator(1).H(0).S(0).canon())
 # ['+Y']
 ```
@@ -75,7 +74,6 @@ Each returns `self`. Takes flattened `(control, target)` pairs.
 ```python
 from aaronson import Simulator
 
-# GHZ_3 by chaining CX(0->1) then CX(1->2).
 ghz = Simulator(3).H(0).CX(0, 1, 1, 2)
 print(ghz.canon())
 # ['+XXX', '+ZZI', '+IZZ']
@@ -164,7 +162,7 @@ signed string like `"ZZ"` or `"-X"`.
 
 ```python
 bell = Simulator(2).H(0).CX(0, 1)
-bell.peek("ZZ")        # +1, no collapse
+bell.peek("ZZ")        # +1
 bell.measure("XX")     # (1, False)
 ```
 

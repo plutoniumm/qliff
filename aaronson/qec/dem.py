@@ -1,7 +1,15 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
 
+from .._types import Bits, Op, Targets
 from ..noise.channel import make_channel
 from ..simulator import CLIFFORD_OPS, GATES_1, GATES_2
+
+if TYPE_CHECKING:
+    from ..circuit import Circuit
 
 _PAULI_BITS = {
     "X": (1, 0),
@@ -10,7 +18,7 @@ _PAULI_BITS = {
 }
 
 
-def _fault_bits(ops, n):
+def _fault_bits(ops: list[Op], n: int) -> tuple[Bits, Bits]:
     x = [0] * n
     z = [0] * n
 
@@ -24,7 +32,7 @@ def _fault_bits(ops, n):
     return x, z
 
 
-def _frame1(name, targets, x, z):
+def _frame1(name: str, targets: Targets, x: Bits, z: Bits) -> None:
     for q in targets:
         if name == "H":
             x[q], z[q] = z[q], x[q]
@@ -32,7 +40,7 @@ def _frame1(name, targets, x, z):
             z[q] ^= x[q]
 
 
-def _frame2(name, targets, x, z):
+def _frame2(name: str, targets: Targets, x: Bits, z: Bits) -> None:
     for i in range(0, len(targets), 2):
         a, b = targets[i], targets[i + 1]
         if name in ("CX", "CNOT"):
@@ -46,10 +54,10 @@ def _frame2(name, targets, x, z):
             z[a], z[b] = z[b], z[a]
 
 
-def _propagate(circuit, loc, fx, fz):
+def _propagate(circuit: Circuit, loc: int, fx: Bits, fz: Bits) -> set[int]:
     """
-    Inject the Pauli fault (fx, fz) at instruction loc and propagate it
-    sign-free to the end, returning the set of measurement indices it flips.
+    Inject Pauli fault (fx, fz) at instruction loc, propagate sign-free to the
+    end; return the set of measurement indices it flips.
     """
     n = circuit.num_qubits
     x = [0] * n
@@ -86,26 +94,27 @@ def _propagate(circuit, loc, fx, fz):
     return flipped
 
 
-def _odd(recs, flipped):
+def _odd(recs: Targets, flipped: set[int]) -> bool:
     return len(set(recs) & flipped) % 2 == 1
 
 
-def _combine(p, q):
+def _combine(p: float, q: float) -> float:
     return p * (1.0 - q) + q * (1.0 - p)
 
 
 class DetectorErrorModel:
     """
-    First-order detector error model. Each Pauli fault branch is propagated sign-free
-    to the circuit end to find the detectors/observables it flips; branches with equal
-    signatures merge as independent errors. Pauli noise only; exporters feed
-    MWPM / BP / ML (no decoder bundled).
+    First-order detector error model. Each Pauli fault branch propagates
+    sign-free to the circuit end to find the detectors/observables it flips;
+    equal-signature branches merge as independent errors. Pauli noise only;
+    exporters feed MWPM / BP / ML (no decoder bundled).
     """
 
-    def __init__(self, circuit):
+    def __init__(self, circuit: Circuit):
         self.num_detectors = len(circuit.detectors)
         self.num_observables = len(circuit.observables)
         merged = {}
+
         for loc, (name, targets, arg) in enumerate(circuit.instructions):
             if name in CLIFFORD_OPS:
                 continue
@@ -117,6 +126,7 @@ class DetectorErrorModel:
                     continue
                 fx, fz = _fault_bits(ops, circuit.num_qubits)
                 flipped = _propagate(circuit, loc, fx, fz)
+
                 dets = frozenset(
                     d for d, recs in enumerate(circuit.detectors) if _odd(recs, flipped)
                 )
@@ -131,16 +141,18 @@ class DetectorErrorModel:
                 merged[key] = _combine(merged.get(key, 0.0), w)
         self.mechanisms = [(p, dets, obs) for (dets, obs), p in merged.items()]
 
-    def check_matrix(self):
+    def check_matrix(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        (H, priors, observable_matrix) for BP decoders: H is
-        (detectors x mechanisms) uint8, observable_matrix is
-        (observables x mechanisms) uint8, priors the per-mechanism probabilities.
+        (H, priors, observable_matrix) for BP decoders:
+            H: (detectors x mechanisms) uint8.
+            obs_matrix: (observables x mechanisms) uint8.
+            priors: per-mechanism probabilities.
         """
         nm = len(self.mechanisms)
         h = np.zeros((self.num_detectors, nm), dtype=np.uint8)
         obs_mat = np.zeros((self.num_observables, nm), dtype=np.uint8)
         priors = np.zeros(nm)
+
         for m, (p, dets, obs) in enumerate(self.mechanisms):
             priors[m] = p
             for d in dets:
@@ -150,18 +162,16 @@ class DetectorErrorModel:
 
         return h, priors, obs_mat
 
-    def weights(self):
-        """
-        Per-mechanism MWPM weights log((1-p)/p).
-        """
+    def weights(self) -> np.ndarray:
+        # Per-mechanism MWPM weights log((1-p)/p).
         priors = np.array([p for p, _, _ in self.mechanisms])
 
         return np.log((1.0 - priors) / priors)
 
-    def graphlike_edges(self):
+    def graphlike_edges(self) -> list[tuple]:
         """
-        Mechanisms flipping at most two detectors, as
-        (detectors, observables, weight) tuples -- a matching graph.
+        Mechanisms flipping <= 2 detectors as (detectors, observables, weight)
+        tuples -- a matching graph.
         """
         edges = []
         for p, dets, obs in self.mechanisms:

@@ -9,7 +9,7 @@ to a noise or QEC sampler.
 from aaronson import Circuit
 
 c = Circuit(2)
-c.H(0).CX(0, 1).M(0, 1)   # methods return self, so calls chain
+c.H(0).CX(0, 1).M(0, 1)
 ```
 
 `Circuit(num_qubits=0)` grows its width automatically as you reference higher
@@ -62,10 +62,10 @@ count back from the measurements declared so far.
 
 ```python
 c = Circuit(1)
-c.M(0)            # rec[-2] after the next line
+c.M(0)
 c.X_ERROR(0, 0.1)
-c.M(0)            # rec[-1]
-c.detector(-1, -2)   # parity of the two measurements
+c.M(0)
+c.detector(-1, -2)
 c.observable(0, -1)
 ```
 
@@ -91,8 +91,8 @@ coherent and non-unitary channels. `stratify` chooses the variance strategy:
 ```python
 c = Circuit(1)
 c.H(0).RZ(0, 0.3)
-c.estimate("X", 20000)                  # ~ cos(0.3), auto-stratified
-c.estimate("X", 20000, stratify=False)  # force flat importance sampling
+c.estimate("X", 20000)                  # ~ cos(0.3)
+c.estimate("X", 20000, stratify=False)
 ```
 
 ## Properties
@@ -115,6 +115,6 @@ instance:
 from aaronson.noise import BitFlip
 
 c = Circuit(1)
-c.append("H", 0)            # equivalent to c.H(0)
-c.noise(BitFlip(0.1), 0)    # any Channel subclass works
+c.append("H", 0)
+c.noise(BitFlip(0.1), 0)
 ```

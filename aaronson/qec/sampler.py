@@ -1,32 +1,41 @@
+from __future__ import annotations
+
 import random
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from .._types import Targets
 from ..noise.channel import make_channel
 from ..simulator import CLIFFORD_OPS, Simulator
+
+if TYPE_CHECKING:
+    from ..circuit import Circuit
 
 
 class DetectorSampler:
     """
-    Sample detection events and observable flips from a noisy circuit. A detection
-    event is a detector's measured parity XORed with its noiseless value. Pauli-noise
-    trajectories only -- coherent channels raise; use the importance sampler.
+    Sample detection events and observable flips from a noisy circuit. A
+    detection event = detector's measured parity XOR its noiseless value.
+    Pauli-noise trajectories only -- coherent channels raise; use the
+    importance sampler.
     """
 
-    def __init__(self, circuit):
+    def __init__(self, circuit: Circuit):
         self.circuit = circuit
+
         reference = self._record(None, noiseless=True)
         self.det_ref = [self._parity(reference, d) for d in circuit.detectors]
         self.obs_ref = [self._parity(reference, r) for _, r in circuit.observables]
 
-    def _parity(self, record, recs):
+    def _parity(self, record: list[int], recs: Targets) -> int:
         bit = 0
         for i in recs:
             bit ^= record[i]
 
         return bit
 
-    def _record(self, rng, noiseless=False):
+    def _record(self, rng: random.Random | None, noiseless: bool = False) -> list[int]:
         seed = None if noiseless else rng.getrandbits(63)
         sim = Simulator(self.circuit.num_qubits, seed)
         for name, targets, arg in self.circuit.instructions:
@@ -42,9 +51,11 @@ class DetectorSampler:
 
         return sim.record
 
-    def sample(self, shots, seed=None):
+    def sample(
+        self, shots: int, seed: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Return (detection_events, observable_flips) as uint8 arrays of shape
+        (detection_events, observable_flips) as uint8 arrays of shape
         (shots, n_detectors) and (shots, n_observables).
         """
         rng = random.Random(seed)

@@ -49,10 +49,10 @@ The Bell pair is the "hello world" of stabilizer simulation. Three conventions:
 ```python
 from aaronson import Simulator
 
-sim = Simulator(2).H(0).CX(0, 1)   # |Phi+> = (|00> + |11>) / sqrt(2)
+sim = Simulator(2).H(0).CX(0, 1)
 
-sim.canon()        # ['+XX', '+ZZ'] — stabilized by +XX and +ZZ
-sim.peek("ZZ")     # +1, reads <ZZ> without collapsing the state
+sim.canon()        # ['+XX', '+ZZ']
+sim.peek("ZZ")     # +1
 ```
 
 Measurements collapse the state and return classical bits. Outcomes append to the
@@ -60,7 +60,7 @@ Measurements collapse the state and return classical bits. Outcomes append to th
 
 ```python
 sim = Simulator(2, seed=0).H(0).CX(0, 1)
-a, b = sim.M(0), sim.M(1)          # perfectly correlated: a == b
+a, b = sim.M(0), sim.M(1)
 ```
 
 The simulator is stateful, so **classical feedback is just Python** — teleportation
@@ -68,14 +68,14 @@ and syndrome correction need no special API:
 
 ```python
 sim = Simulator(3, seed=0)
-sim.H(0)                            # message qubit
-sim.H(1).CX(1, 2)                   # Bell pair on (1, 2)
+sim.H(0)
+sim.H(1).CX(1, 2)
 sim.CX(0, 1).H(0)
-if sim.M(1) == 1:                   # corrections conditioned on outcomes
+if sim.M(1) == 1:
     sim.X(2)
 if sim.M(0) == 1:
     sim.Z(2)
-sim.peek("IIX")          # +1: |+> teleported to qubit 2
+sim.peek("IIX")          # +1
 ```
 
 ## Next steps

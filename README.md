@@ -1,11 +1,9 @@
 # aaronson
 
-A Clifford stabilizer simulator with with support for noisy and mid circuit measurement-based simulations.
+A Clifford stabilizer simulator with support for noisy and mid-circuit measurement-based simulation.
 
-- **Noise-free Clifford simulation** via the CHP / Aaronson–Gottesman tableau (bit-packed,
-  in Rust), with a stim-style uppercase API (`H`, `S`, `CX`, `CZ`, `M`, `R`, …). Verified
-  against [stim](https://github.com/quantumlib/Stim) on random Clifford circuits.
-- **Noisy simulation of general — including coherent — noise** via stabilizer-channel
+- **Clifford stab simulation** via the Aaronson–Gottesman tableau
+- **Noisy sim** via stabilizer-channel
   decomposition `E = Σ_μ q_μ S_μ` and **stratified importance sampling**
   ([arXiv:2512.07304](https://arxiv.org/abs/2512.07304)), "nearly as cheap as Pauli noise."
 - **Decoder-ready QEC primitives**: detectors, observables, detection-event sampling, a
@@ -13,27 +11,25 @@ A Clifford stabilizer simulator with with support for noisy and mid circuit meas
   priors, matching weights, syndrome/label tensors). No decoder is bundled — these drop
   straight into MWPM (pymatching), BP, or ML decoders.
 
-
 ## Install
 
 ```sh
 pip install aaronson
 ```
 
-Full documentation (quickstart, Simulator, Circuit, observables, noise, QEC) lives at
-[plutoniumm.github.io/aaronson](https://plutoniumm.github.io/aaronson/).
+Docs at [plutoniumm.github.io/aaronson](https://plutoniumm.github.io/aaronson/).
 
 ## Clifford simulation
 
 ```python
-from aaronson import Simulator, fidelity
+from aaronson import Simulator
 
 s = Simulator(2).H(0).CX(0, 1)
-s.canon()              # ['+XX', '+ZZ']
-s.peek("ZZ")                # +1   (read an expectation, no collapse)
-s.measure("XX")                  # (+1, False) — multi-qubit stabilizer measurement
+s.canon()        # ['+XX', '+ZZ']
+s.peek("ZZ")     # +1
+s.measure("XX")  # (+1, False)
 
-m0, m1 = Simulator(2).H(0).CX(0, 1).M(0, 1)   # correlated: m0 == m1
+m0, m1 = Simulator(2).H(0).CX(0, 1).M(0, 1)  # m0 == m1
 ```
 
 Mid-circuit measurement and classical feedback are just Python — the simulator is stateful,
@@ -45,38 +41,34 @@ s.H(0)
 s.H(1).CX(1, 2)
 s.CX(0, 1).H(0)
 
-# conditional gates
 if s.M(1) == 1:
-  s.X(2)
+    s.X(2)
 if s.M(0) == 1:
-  s.Z(2)
+    s.Z(2)
 
-s.peek("__X") # +1: teleported to qubit 2
+s.peek("__X")  # +1
 ```
 
 ## Noise
+Build `Circuit` with gate/noise methods, then sample or estimate.
 
-Build a `Circuit` with fluent gate/noise methods, then sample or estimate. `Circuit.estimate`
-picks the right sampler by default — plain Monte-Carlo when every channel is Pauli, otherwise
-stratified importance sampling (unbiased even for coherent/non-unitary noise).
+`Circuit.estimate` picks the right sampler by default — plain Monte-Carlo when every channel is Pauli, otherwise
+stratified importance sampling
 
 ```python
 from aaronson import Circuit
 
-# Pauli noise
 c = Circuit(1)
 c.H(0).DEPOLARIZE1(0, 0.1).M(0)
-c.sample(1000)                          # measurement records
+c.sample(1000)
 
-# coherent noise: <X> after a small Z-rotation, reproduced exactly
 c = Circuit(1)
 c.H(0).RZ(0, 0.3)
-c.estimate("X", 20000)                  # ≈ cos(0.3), auto-stratified
+c.estimate("X", 20000)  # ≈ cos(0.3)
 
-# general non-unitary noise: amplitude damping (arXiv:2512.07304)
 c = Circuit(1)
 c.X(0).AMPLITUDE_DAMP(0, 0.3)
-c.estimate("Z", 60000)                  # ≈ 2p - 1, matches the exact channel
+c.estimate("Z", 60000)  # ≈ 2p - 1
 ```
 
 Force the variance strategy with `c.estimate(obs, shots, stratify=False)` (flat) or `stratify=True`
@@ -95,16 +87,18 @@ from aaronson.qec import rotated_surface_code, logical_fidelity
 from pymatching import Matching
 
 c = rotated_surface_code(distance=5, rounds=5, p=0.01)
-dem = c.dem()                                            # detector error model
-H, priors, obs_matrix = dem.check_matrix()               # feed BP, or MWPM:
-m = Matching.from_check_matrix(H, weights=dem.weights(), faults_matrix=obs_matrix)
+dem = c.dem()
 
-dets, flips = c.detector_sampler().sample(20000)         # syndrome + label tensors (numpy)
-fidelity = logical_fidelity(m.decode_batch(dets), flips) # 1 - logical error rate
+H, priors, obs_matrix = dem.check_matrix()
+m = Matching.from_check_matrix(
+  H,
+  weights=dem.weights(),
+  faults_matrix=obs_matrix
+)
+
+dets, flips = c.detector_sampler().sample(20000)
+fidelity = logical_fidelity(m.decode_batch(dets), flips)
 ```
-
-Both the repetition and rotated surface codes show the logical error rate falling with
-distance below threshold. See `base/surface_code.py` for full LER / fidelity tables.
 
 ## Extending
 
@@ -117,11 +111,11 @@ fast tableau engine.
 
 ```sh
 ./do develop   # build rust core
-./do test      # run tests
+./do test
 ./do lint
 ./do bench
 ./do docs      # build docs
-./do deploy    # deploy docs
+./do deploy    # publish the package to PyPI
 ```
 
 ## License

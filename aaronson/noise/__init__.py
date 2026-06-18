@@ -6,8 +6,8 @@ from .channel import (
     Depolarize1,
     Depolarize2,
     PauliChannel,
-    PauliRotation,
     PhaseFlip,
+    Rotation,
     make_channel,
 )
 from .sampler import Sampler
@@ -15,7 +15,7 @@ from .sampler import Sampler
 __all__ = [
     "Channel",
     "PauliChannel",
-    "PauliRotation",
+    "Rotation",
     "AmplitudeDamping",
     "Depolarize1",
     "Depolarize2",

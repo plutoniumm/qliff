@@ -1,63 +1,74 @@
+from __future__ import annotations
+
 import numpy as np
 
 from ..circuit import Circuit
 
 
-def repetition_code(distance, rounds, p):
+def repetition_code(distance: int, rounds: int, p: float) -> Circuit:
     """
-    Bit-flip repetition-code memory experiment: distance data + distance-1
-    ancillas, per-round X error p on each data qubit. Ancillas measure adjacent
-    Z parities; detectors compare each ancilla round-to-round; final data M seeds
-    boundary detectors and the logical-Z observable.
+    Bit-flip repetition-code memory: distance data + distance-1 ancillas,
+    per-round X error p per data qubit. Ancillas read adjacent Z parities;
+    detectors compare each ancilla round-to-round; final data M seeds boundary
+    detectors and the logical-Z observable.
     """
     c = Circuit()
     data = list(range(distance))
     anc = list(range(distance, 2 * distance - 1))
     checks = distance - 1
+
     for r in range(rounds):
         for q in data:
             c.append("X_ERROR", [q], p)
+
         for i in range(checks):
             c.append("CX", [data[i], anc[i]])
             c.append("CX", [data[i + 1], anc[i]])
+
         for i in range(checks):
             c.append("MR", [anc[i]])
             if r == 0:
                 c.detector(-1)
             else:
                 c.detector(-1, -1 - checks)
+
     for q in data:
         c.append("M", [q])
     for i in range(checks):
         c.detector(-distance + i, -distance + i + 1, -distance - checks + i)
+
     c.observable(0, *[-distance + i for i in range(distance)])
 
     return c
 
 
-def _qubit_grid(distance):
+def _qubit_grid(distance: int) -> tuple[dict[tuple[int, int], int], list]:
     """
     Map rotated-surface-code sites to qubit indices. Returns (data, plaq):
-    data[(r, c)] -> qubit index over the distance x distance grid, and plaq a
-    list of (kind, anc_index, touched_data) with kind in {"X", "Z"}.
+    data[(r, c)] -> index over the d x d grid; plaq a list of
+    (kind, anc_index, touched_data), kind in {"X", "Z"}.
     """
     data = {}
     for r in range(distance):
         for col in range(distance):
             data[(r, col)] = len(data)
+
     plaq = []
     index = len(data)
+
     for r in range(-1, distance):
         for col in range(-1, distance):
             kind = "Z" if (r + col) % 2 == 0 else "X"
             corners = [(r, col), (r, col + 1), (r + 1, col), (r + 1, col + 1)]
             touch = sorted(d for d in corners if d in data)
+
             if len(touch) == 4:
                 plaq.append((kind, index, touch))
                 index += 1
                 continue
             if len(touch) != 2:
                 continue
+
             on_row = r < 0 or r >= distance - 1
             keep = (kind == "Z" and on_row) or (kind == "X" and not on_row)
             if keep:
@@ -67,13 +78,13 @@ def _qubit_grid(distance):
     return data, plaq
 
 
-def rotated_surface_code(distance, rounds, p):
+def rotated_surface_code(distance: int, rounds: int, p: float) -> Circuit:
     """
-    Rotated planar surface-code Z-memory experiment: distance x distance data
-    grid with weight-4/2 X/Z plaquettes, logical |0>, DEPOLARIZE1 p per round.
-    Only Z stabilizers declare round-to-round detectors (deterministic in a
-    Z-basis memory), keeping the graph graphlike. Final data M seeds boundary Z
-    detectors and the logical-Z observable along a column.
+    Rotated planar surface-code Z-memory: d x d data grid, weight-4/2 X/Z
+    plaquettes, logical |0>, DEPOLARIZE1 p per round. Only Z stabilizers declare
+    round-to-round detectors (deterministic in a Z-basis memory), keeping the
+    graph graphlike. Final data M seeds boundary Z detectors and the logical-Z
+    observable along a column.
     """
     data, plaq = _qubit_grid(distance)
     z_checks = [pq for pq in plaq if pq[0] == "Z"]
@@ -81,9 +92,11 @@ def rotated_surface_code(distance, rounds, p):
     order = z_checks + x_checks
     width = len(order)
     c = Circuit()
+
     for r in range(rounds):
         for q in range(distance * distance):
             c.append("DEPOLARIZE1", [q], p)
+
         for kind, anc, touch in order:
             if kind == "X":
                 c.append("H", [anc])
@@ -100,6 +113,7 @@ def rotated_surface_code(distance, rounds, p):
                 c.detector(-1)
             else:
                 c.detector(-1, -1 - width)
+
     n_data = distance * distance
     for q in range(n_data):
         c.append("M", [q])
@@ -107,20 +121,22 @@ def rotated_surface_code(distance, rounds, p):
         recs = [-n_data + data[d] for d in touch]
         prev = -n_data - width + k
         c.detector(*recs, prev)
+
     column = [-n_data + data[(r, 0)] for r in range(distance)]
     c.observable(0, *column)
 
     return c
 
 
-def logical_fidelity(predictions, observed):
+def logical_fidelity(predictions: np.ndarray, observed: np.ndarray) -> float:
     """
-    Logical fidelity 1 - mean(prediction != observed), the complement of the
-    logical error rate. Arrays of decoded vs true observable flips; a multi-column
+    Logical fidelity = 1 - mean(prediction != observed) (complement of the
+    logical error rate). Decoded vs true observable-flip arrays; a multi-column
     row errs if any column disagrees.
     """
     predictions = np.asarray(predictions)
     observed = np.asarray(observed)
+
     if predictions.ndim > 1:
         mismatch = np.any(predictions != observed, axis=1)
     else:

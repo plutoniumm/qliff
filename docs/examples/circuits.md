@@ -45,7 +45,7 @@ from aaronson import Circuit
 c = Circuit(2)
 c.H(0).CX(0, 1).M(0, 1)
 
-shots = c.sample(1000, seed=0)   # list[list[int]], one record per shot
+shots = c.sample(1000, seed=0)
 ```
 
 Every record is `[0, 0]` or `[1, 1]` — the two Bell outcomes, in equal
@@ -60,11 +60,11 @@ from aaronson import Simulator
 
 sim = Simulator(1, seed=0)
 sim.H(0)
-sim.MR(0)          # measure in Z, then reset to |0>
+sim.MR(0)
 sim.X(0)
-sim.M(0)           # always 1 after the X
+sim.M(0)
 
-sim.record         # e.g. [0, 1] or [1, 1] — the MR bit is random, the M is 1
+sim.record         # e.g. [0, 1] or [1, 1]
 ```
 
 `record` lists past outcomes in order; `MR` collapses then resets, so the final
@@ -79,15 +79,15 @@ conditioned on the two measured bits.
 from aaronson import Simulator
 
 sim = Simulator(3, seed=0)
-sim.H(0)                    # prepare |+> as the message
-sim.H(1).CX(1, 2)           # Bell pair on (1, 2)
+sim.H(0)
+sim.H(1).CX(1, 2)
 sim.CX(0, 1).H(0)
 if sim.M(1) == 1:
-    sim.X(2)                # corrections are ordinary Python branches
+    sim.X(2)
 if sim.M(0) == 1:
     sim.Z(2)
 
-sim.peek("__X")        # +1: |+> recovered on qubit 2
+sim.peek("__X")        # +1
 ```
 
 The message lands on qubit 2 regardless of the random outcomes:
@@ -102,8 +102,8 @@ untouched.
 from aaronson import Simulator
 
 sim = Simulator(2).H(0).CX(0, 1)
-sim.peek("ZZ")         # +1, perfectly correlated
-sim.peek("ZI")         # 0, qubit 0 alone is maximally mixed
+sim.peek("ZZ")         # +1
+sim.peek("ZI")         # 0
 ```
 
 A `0` means the state is not an eigenstate of `P`; the simulator is unchanged, so

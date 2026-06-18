@@ -13,7 +13,7 @@ $3\to-i$. Valid observables are Hermitian, i.e. have even phase.
 ```python
 from aaronson import PauliString
 
-p = PauliString.parse("-XYZ")   # phase 2, then X, Y, Z
+p = PauliString.parse("-XYZ")
 ```
 
 ### Constructors
@@ -41,7 +41,7 @@ from aaronson import PauliString
 x = PauliString.parse("X")
 z = PauliString.parse("Z")
 
-(x * z)                         # -iY  (phase tracked)
+(x * z)                         # -iY
 x.commutes_with(z)              # False
 PauliString.from_sparse(3, {0: "X", 2: "Z"})   # +XIZ
 ```
@@ -70,9 +70,9 @@ from aaronson import Simulator
 
 bell = Simulator(2).H(0).CX(0, 1)
 
-bell.peek("ZZ")             # +1, no collapse
-bell.measure("XX")          # (1, False): deterministic +1
-Simulator(2).measure("XX")  # (±1, True): random on |00>
+bell.peek("ZZ")             # +1
+bell.measure("XX")          # (1, False)
+Simulator(2).measure("XX")  # (±1, True)
 ```
 
 ## State fidelity
@@ -84,9 +84,9 @@ copy of `b`, so the result is always a power of two.
 ```python
 from aaronson import Simulator, fidelity
 
-fidelity(Simulator(1), Simulator(1).H(0))   # 0.5  (|0> vs |+>)
+fidelity(Simulator(1), Simulator(1).H(0))   # 0.5
 
 a = Simulator(2).H(0).CX(0, 1)
 fidelity(a, a.copy())                        # 1.0
-fidelity(a, a.copy().Z(0))                   # 0.0  (|Phi+> vs |Phi->)
+fidelity(a, a.copy().Z(0))                   # 0.0
 ```
