@@ -8,7 +8,7 @@ from .._core import ColTableau
 from .._types import Branch
 from ..circuit import Circuit
 from ..pauli import PauliString
-from ..simulator import CLIFFORD_OPS, GATE_OPCODE, GATES_1, GATES_2, Simulator
+from ..simulator import CLIFFORD_OPS, GATE_OPCODE, GATES_1, GATES_2, MEAS, Simulator
 from .channel import make_channel
 
 _UNSET = object()  # sentinel: CompiledSampler reference not computed yet
@@ -21,6 +21,28 @@ def _compile_branches(branches: list[Branch]) -> list | None:
     for weight, ops in branches:
         cops = []
         for gate, qubits in ops:
+            code = GATE_OPCODE.get(gate)
+            if code is None:
+                return None
+
+            b = qubits[1] if len(qubits) == 2 else 0
+            cops.append((code, qubits[0], b))
+        table.append((float(weight), cops))
+
+    return table
+
+
+def _compile_estimate_branches(branches: list[Branch]) -> list | None:
+    # (SIGNED weight, [(opcode, a, b), ...]) per branch for the Rust estimator;
+    # opcode 9 = reset. None if a branch op has no core opcode.
+    table = []
+    for weight, ops in branches:
+        cops = []
+        for gate, qubits in ops:
+            if gate == "R":
+                cops.append((9, qubits[0], 0))
+                continue
+
             code = GATE_OPCODE.get(gate)
             if code is None:
                 return None
@@ -147,6 +169,38 @@ class Sampler:
 
         return sim, weight
 
+    def _compile_estimate(self) -> tuple[list, list] | None:
+        # Lower the circuit to the Rust importance estimator: gates + SIGNED-weight
+        # noise branches (Pauli / Clifford / reset). None (-> Python fallback) for a
+        # mid-circuit measurement (estimate evaluates <O> on the final state) or a
+        # channel op with no core opcode (a custom non-Clifford gate).
+        instrs = []
+        tables = []
+
+        for name, targets, arg in self.circuit.instructions:
+            if name in GATES_1:
+                op = GATE_OPCODE[name]
+                instrs.extend((0, op, q, 0) for q in targets)
+            elif name in GATES_2:
+                op = GATE_OPCODE[name]
+                instrs.extend(
+                    (0, op, targets[k], targets[k + 1])
+                    for k in range(0, len(targets), 2)
+                )
+            elif name in MEAS:
+                return None
+            else:
+                table = _compile_estimate_branches(
+                    make_channel(name, arg).branches(targets)
+                )
+                if table is None:
+                    return None
+
+                instrs.append((2, len(tables), 0, 0))
+                tables.append(table)
+
+        return instrs, tables
+
     def expect(
         self,
         observable: PauliString | str,
@@ -158,14 +212,33 @@ class Sampler:
         Estimate <observable>, unbiased for any channel. Each trajectory draws
         one branch per noise location with weight w = prod(sign * gamma);
         estimate = mean(w * <O>). stratify=True stratifies by fault count for
-        lower variance.
+        lower variance. Built-in channels run the trajectory loop in Rust (rayon);
+        a custom channel or a mid-circuit measurement falls back to Python.
         """
         if stratify:
             return self._expect_stratified(observable, shots, seed)
 
+        obs = observable
+        if isinstance(obs, str):
+            obs = PauliString.parse(obs)
+        if obs.phase % 2 == 1:
+            raise ValueError("observable must be Hermitian (phase +1 or -1)")
+
+        compiled = None
+        if obs.n == self.circuit.num_qubits:
+            compiled = self._compile_estimate()
+
+        if compiled is not None:
+            instrs, tables = compiled
+            rng_seed = random.Random(seed).getrandbits(64)
+            core = ColTableau(self.circuit.num_qubits)
+            est = core.estimate(instrs, tables, obs.x, obs.z, shots, rng_seed)
+
+            return -est if obs.phase == 2 else est
+
+        # fallback: per-trajectory Python loop (custom channel or mid-circuit measure)
         rng = random.Random(seed)
         total = 0.0
-
         for _ in range(shots):
             sim, weight = self._weighted_trajectory(rng)
             total += weight * sim.peek(observable)

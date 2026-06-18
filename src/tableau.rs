@@ -46,6 +46,10 @@ const FRAME_CHUNK: usize = 1024;
 // for finer work-stealing granularity; one tableau alloc per chunk amortizes away.
 const BATCH_CHUNK: usize = 256;
 
+// Shots per parallel chunk for the importance estimator (estimate). Per-shot full
+// tableau + a final observable expectation -- heavy, so a small chunk for balance.
+const EST_CHUNK: usize = 256;
+
 // Per-chunk noise seed: decorrelate (base, chunk) through the splitmix finalizer
 // so disjoint shot-chunks draw independent streams.
 fn chunk_seed(base: u64, chunk: u64) -> u64 {
@@ -269,6 +273,69 @@ fn batch_chunk(
             }
         }
     }
+}
+
+// One shot-chunk of the quasiprobability importance estimator (Sampler.expect /
+// Circuit.estimate). Per shot: run the circuit, sampling ONE branch per noise
+// location ~ |weight|/gamma and multiplying the trajectory weight by
+// sign(weight)*gamma; then evaluate <observable> on the final stabilizer state.
+// Returns the partial sum of weight*<O> over the chunk (caller divides by shots).
+// Branch op opcode 9 = reset; 0..8 = the usual gates. Unbiased for ANY channel.
+#[allow(clippy::too_many_arguments)]
+fn estimate_chunk(
+    instrs: &[(u8, u32, u32, u32)],
+    branches: &[Vec<(f64, Vec<(u8, u32, u32)>)>],
+    gammas: &[f64],
+    obs_x: &[u8],
+    obs_z: &[u8],
+    n: usize,
+    chunk_shots: usize,
+    coin_seed: u64,
+    noise_seed: u64,
+) -> f64 {
+    let mut t = ColTableau::new(n, Some(coin_seed));
+    let mut noise = Rng::new(noise_seed);
+    let mut acc = 0.0;
+
+    for _ in 0..chunk_shots {
+        t.reset_to_zero();
+        let mut weight = 1.0f64;
+
+        for &(kind, x, y, z) in instrs {
+            match kind {
+                0 => t.apply_gate(x as u8, y as usize, z as usize),
+                2 => {
+                    let table = &branches[x as usize];
+                    let gamma = gammas[x as usize];
+                    let thr = noise.next_f64() * gamma;
+                    let mut a = 0.0;
+                    let mut pick = table.len() - 1;
+                    for (i, (w, _)) in table.iter().enumerate() {
+                        a += w.abs();
+                        if thr <= a {
+                            pick = i;
+                            break;
+                        }
+                    }
+                    let (w, ops) = &table[pick];
+                    weight *= if *w >= 0.0 { gamma } else { -gamma };
+                    for &(op, qa, qb) in ops {
+                        if op == 9 {
+                            t.reset(qa as usize);
+                        } else {
+                            t.apply_gate(op, qa as usize, qb as usize);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        t.to_row();
+        acc += weight * (t.inner.expectation(obs_x, obs_z) as f64);
+    }
+
+    acc
 }
 
 // g = power of i when (x1,z1) * (x2,z2).
@@ -705,7 +772,7 @@ impl RowTableau {
     //   P anticommutes with any stabilizer        -> 0   (P ∉ stabilizer group)
     //   else  P = ± Π stab_k over destabs k that anticommute with P
     //         rebuild that product in scratch (sx,sz,ssign); return its sign as ±1
-    fn expectation(&self, px: Vec<u8>, pz: Vec<u8>) -> i8 {
+    fn expectation(&self, px: &[u8], pz: &[u8]) -> i8 {
         let n = self.nq;
         for k in n..2 * n {
             let mut sp = 0u8;
@@ -1282,6 +1349,53 @@ impl ColTableau {
         (out, num_meas)
     }
 
+    // Quasiprobability importance estimator for <observable> under general noise.
+    // instrs: 0=gate(op,a,b), 2=noise(table=x). branches[i] = [(SIGNED weight,
+    // [(op,a,b)..]) ..] (op 9 = reset). Parallel over fixed-size shot chunks (rayon;
+    // reproducible regardless of core count). Unbiased for ANY channel -- this is
+    // the differentiating coherent/amplitude path, off the Python/GIL loop.
+    fn estimate(
+        &self,
+        instrs: Vec<(u8, u32, u32, u32)>,
+        branches: Vec<Vec<(f64, Vec<(u8, u32, u32)>)>>,
+        obs_x: Vec<u8>,
+        obs_z: Vec<u8>,
+        shots: usize,
+        seed: u64,
+    ) -> f64 {
+        if shots == 0 {
+            return 0.0;
+        }
+
+        let n = self.nq;
+        let gammas: Vec<f64> = branches
+            .iter()
+            .map(|t| t.iter().map(|(w, _)| w.abs()).sum())
+            .collect();
+        let noise_base = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let nchunks = shots.div_ceil(EST_CHUNK);
+        let total: f64 = (0..nchunks)
+            .into_par_iter()
+            .map(|c| {
+                let lo = c * EST_CHUNK;
+                let cs = EST_CHUNK.min(shots - lo);
+                estimate_chunk(
+                    &instrs,
+                    &branches,
+                    &gammas,
+                    &obs_x,
+                    &obs_z,
+                    n,
+                    cs,
+                    chunk_seed(seed, c as u64),
+                    chunk_seed(noise_base, c as u64),
+                )
+            })
+            .sum();
+
+        total / shots as f64
+    }
+
     #[pyo3(signature = (a, force=None))]
     fn measure(&mut self, a: usize, force: Option<bool>) -> bool {
         self.to_row();
@@ -1319,7 +1433,7 @@ impl ColTableau {
 
     fn expectation(&mut self, px: Vec<u8>, pz: Vec<u8>) -> i8 {
         self.to_row();
-        self.inner.expectation(px, pz)
+        self.inner.expectation(&px, &pz)
     }
 
     #[pyo3(signature = (px, pz, force=None))]
