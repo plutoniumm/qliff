@@ -84,10 +84,9 @@ class Sampler:
         self.circuit = circuit
 
     def _compile(self) -> tuple[list, list] | None:
-        # Lower the circuit to the Rust batched sampler: a flat instruction stream
-        # (kind, x, y, z) plus per-noise-op Pauli branch tables. Return None (->
-        # Python fallback) for any non-Pauli channel or a branch op with no opcode
-        # (e.g. a custom Channel emitting a gate the core doesn't know).
+        # lower the circuit to the Rust batched sampler: a flat instr stream
+        # (kind, x, y, z) + per-noise-op Pauli branch tables. None (-> Python
+        # fallback) for a non-Pauli channel or a branch op with no opcode.
         instrs = []
         tables = []
 
@@ -131,8 +130,8 @@ class Sampler:
         return CompiledSampler(self.circuit).sample(shots, seed)
 
     def _sample_python(self, shots: int, seed: int | None) -> np.ndarray:
-        # Fallback: one tableau per shot in Python, but each Channel built once
-        # (not per shot). Used when _compile can't lower the circuit.
+        # fallback: one tableau per shot in Python, but each Channel built once
+        # (not per shot). used when _compile can't lower the circuit.
         prepared = [
             (name, targets, None if name in CLIFFORD_OPS else make_channel(name, arg))
             for name, targets, arg in self.circuit.instructions
@@ -170,10 +169,10 @@ class Sampler:
         return sim, weight
 
     def _compile_estimate(self) -> tuple[list, list] | None:
-        # Lower the circuit to the Rust importance estimator: gates + SIGNED-weight
+        # lower the circuit to the Rust importance estimator: gates + SIGNED-weight
         # noise branches (Pauli / Clifford / reset). None (-> Python fallback) for a
         # mid-circuit measurement (estimate evaluates <O> on the final state) or a
-        # channel op with no core opcode (a custom non-Clifford gate).
+        # channel op with no core opcode.
         instrs = []
         tables = []
 
@@ -246,8 +245,8 @@ class Sampler:
         return total / shots
 
     def _build_strata(self) -> tuple[list, list[float], list[float]]:
-        # Lazily compute the per-location branch data and Poisson-binomial P(k)
-        # used by stratified estimation; only paid when stratify=True is requested.
+        # lazily compute per-location branch data + Poisson-binomial P(k) for
+        # stratified estimation; only paid when stratify=True.
         locs = []
         phis = []
 
@@ -341,9 +340,9 @@ class Sampler:
         shots: int,
         seed: int | None,
     ) -> float:
-        # Estimate = sum_k P(k) F_k: P(k) the exact Poisson-binomial prob of k
+        # estimate = sum_k P(k) F_k: P(k) the exact Poisson-binomial prob of k
         # faulty locations, F_k the importance estimate conditioned on k faults.
-        # Lower variance than flat importance sampling at equal shots.
+        # lower variance than flat importance sampling at equal shots.
         locs, phis, pk = self._build_strata()
         rng = random.Random(seed)
         total = 0.0
@@ -382,8 +381,8 @@ class CompiledSampler:
         instrs, tables = self._compiled
         rng_seed = random.Random(seed).getrandbits(64)
 
-        # The reference run is the frame sampler's one serial cost and depends only
-        # on the circuit -> compute it ONCE and reuse across calls (amortizes it
+        # the reference run is the frame sampler's one serial cost and depends only
+        # on the circuit -> compute it once and reuse across calls (amortizes it
         # over an LER sweep). None => a measurement is random => per-shot sample_batch.
         if self._ref is _UNSET:
             self._ref = self._core.frame_reference(instrs)

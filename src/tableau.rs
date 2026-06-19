@@ -5,8 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-// splitmix64: Someone has to check this. Its whole
-// ass AI generated, and Ive not even looked at it
+// splitmix64, the canonical constants. fast + seedable, fine for measurement
+// coins and noise sampling (not crypto).
 #[derive(Clone)]
 struct Rng {
     s: u64,
@@ -34,20 +34,17 @@ impl Rng {
     }
 }
 
-// Shots per parallel frame chunk. FIXED (not core-derived) so frame_sample's
-// output depends only on (seed, this constant) -- reproducible no matter how many
-// cores run it. Small enough that #chunks >> #cores for typical runs (good load
-// balance), big enough that per-chunk setup amortizes; per-chunk frame buffers
-// (n * ceil(1024/64) u64 each) stay L2-resident.
+// shots per parallel frame chunk. fixed (not core-derived) so the sample
+// output depends only on (seed, this constant) -- reproducible across cores.
 const FRAME_CHUNK: usize = 1024;
 
-// Shots per parallel chunk for the per-shot tableau sampler (sample_batch). Each
-// shot is ~1000x heavier than a frame shot (full tableau), so use a smaller chunk
-// for finer work-stealing granularity; one tableau alloc per chunk amortizes away.
+// shots per chunk for the per-shot tableau sampler. each shot is a full tableau
+// (~1000x heavier than a frame shot), so smaller than FRAME_CHUNK for finer
+// work-stealing; one tableau alloc per chunk amortizes away.
 const BATCH_CHUNK: usize = 256;
 
-// Shots per parallel chunk for the importance estimator (estimate). Per-shot full
-// tableau + a final observable expectation -- heavy, so a small chunk for balance.
+// shots per chunk for the importance estimator. each shot is a full tableau + a
+// final observable expectation -- heavy, so a small chunk for balance.
 const EST_CHUNK: usize = 256;
 
 // Per-chunk noise seed: decorrelate (base, chunk) through the splitmix finalizer
@@ -59,10 +56,9 @@ fn chunk_seed(base: u64, chunk: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-// One shot-chunk of the Pauli-frame engine: replay the instruction stream over
-// `chunk_shots` shots (bit-packed, 64/word), writing records into `out` (length
-// chunk_shots*num_meas, shot-major). Pure frame logic over its own buffers, so
-// disjoint chunks run in parallel; `ref_bits` (noiseless reference) is read-only.
+// one shot-chunk of the Pauli-frame engine: replay instrs over `chunk_shots`
+// shots (bit-packed, 64/word), writing records shot-major into `out`. own buffers
+// -> disjoint chunks run in parallel; `ref_bits` (noiseless reference) is read-only.
 fn frame_chunk(
     instrs: &[(u8, u32, u32, u32)],
     branches: &[Vec<(f64, Vec<(u8, u32, u32)>)>],
@@ -216,11 +212,10 @@ fn frame_chunk(
     }
 }
 
-// One shot-chunk of the per-shot tableau Monte-Carlo sampler (sample_batch's path,
-// used when a measurement is random so the frame method can't apply). Each chunk
-// owns a tableau (reset in place per shot) + its own coin/noise RNGs, so disjoint
-// chunks run in parallel; records written shot-major into `out`. Shots here are
-// fully independent -- no shared reference run -- so this scales near-linearly.
+// one shot-chunk of the per-shot tableau MC sampler (used when a measurement is
+// random, so the frame method can't apply). each chunk owns a tableau (reset per
+// shot) + its own coin/noise RNGs -> parallel, records written shot-major into
+// `out`. shots fully independent (no shared reference) so this scales near-linearly.
 fn batch_chunk(
     instrs: &[(u8, u32, u32, u32)],
     branches: &[Vec<(f64, Vec<(u8, u32, u32)>)>],
@@ -275,12 +270,11 @@ fn batch_chunk(
     }
 }
 
-// One shot-chunk of the quasiprobability importance estimator (Sampler.expect /
-// Circuit.estimate). Per shot: run the circuit, sampling ONE branch per noise
-// location ~ |weight|/gamma and multiplying the trajectory weight by
-// sign(weight)*gamma; then evaluate <observable> on the final stabilizer state.
-// Returns the partial sum of weight*<O> over the chunk (caller divides by shots).
-// Branch op opcode 9 = reset; 0..8 = the usual gates. Unbiased for ANY channel.
+// one shot-chunk of the quasiprobability importance estimator. per shot: run the
+// circuit, picking ONE branch per noise location ~ |weight|/gamma and multiplying
+// the trajectory weight by sign(weight)*gamma, then evaluate <observable>. returns
+// the partial sum of weight*<O> (caller divides by shots). op 9 = reset, 0..8 =
+// gates. unbiased for ANY channel.
 #[allow(clippy::too_many_arguments)]
 fn estimate_chunk(
     instrs: &[(u8, u32, u32, u32)],
@@ -344,7 +338,7 @@ fn estimate_chunk(
 //   P1=X -> z2*(2*x2-1)   = +1 if P2=Y, -1 if P2=Z, else 0
 //   P1=Z -> x2*(1-2*z2)   = +1 if P2=X, -1 if P2=Y, else 0
 //   P1=Y -> z2 - x2       = +1 if P2=Z, -1 if P2=X, else 0
-// Kept as the scalar reference that `word_g` (below) implements bit-parallel.
+// scalar reference; `word_g` (below) does this bit-parallel.
 #[allow(dead_code)]
 #[inline]
 fn g(x1: bool, z1: bool, x2: bool, z2: bool) -> i32 {
@@ -356,15 +350,12 @@ fn g(x1: bool, z1: bool, x2: bool, z2: bool) -> i32 {
     }
 }
 
-// word_g: Σ of g over the 64 Pauli lanes packed in one word, where lane k holds
-// P1 = (xi,zi)[k] (first operand) and P2 = (xh,zh)[k] (second). This is the
-// bit-parallel form of the per-qubit g() loop: each lane contributes +1/-1/0 and
-// we popcount the two masks. Encoding P=(x,z): I=00 X=10 Z=01 Y=11.
+// word_g: Σ g over the 64 Pauli lanes in one word, lane k = P1=(xi,zi)[k],
+// P2=(xh,zh)[k]. bit-parallel form of g(): each lane is +1/-1/0, popcount the two
+// masks. encoding P=(x,z): I=00 X=10 Z=01 Y=11.
 //   +1 lanes: (X,Y) (Z,X) (Y,Z)        -1 lanes: (X,Z) (Z,Y) (Y,X)
-// At every lane (x1,z1) is exactly one of I/X/Z/Y, so the three +terms (and the
-// three -terms) live on disjoint lanes -> OR-then-popcount counts each once, and
-// a +term and -term never share a lane. Lanes past nq are all-zero => I => 0, so
-// the unused tail of the last word is harmless and needs no masking.
+// the three +terms (and -terms) live on disjoint lanes -> OR-then-popcount counts
+// each once. tail lanes past nq are all-zero => I => 0, so no masking needed.
 #[inline]
 fn word_g(xi: u64, zi: u64, xh: u64, zh: u64) -> i32 {
     let plus = (xi & !zi & xh & zh) | (!xi & zi & xh & !zh) | (xi & zi & !xh & zh);
@@ -863,26 +854,24 @@ impl RowTableau {
 
 // ---------------------------------------------------------------------------
 // ColTableau: column-major (qubit-major) bit planes for word-parallel gates,
-// transposed to the row-major engine (the `RowTableau` above, reused as `inner`)
-// for measurement. `layout` says which side is authoritative; we transpose
-// lazily, only when the op kind switches. A gate touches O(rows/64) words per
-// plane -- signs included -- instead of O(rows) scalar row touches: no cache
-// cliff, auto-vectorizable. Measurement delegates to the proven row-major path,
-// so its lead is preserved verbatim. Transpose is the naive O(rows*nq) form for
-// now (amortized: one per measurement round); 64x64 block transpose is the
-// later optimization.
+// transposed to the row-major engine (`inner`, the RowTableau above) for
+// measurement. `layout` says which side is authoritative; we transpose lazily,
+// only when the op kind switches. a gate touches O(rows/64) words per plane
+// (signs included) instead of O(rows) scalar touches -- no cache cliff,
+// auto-vectorizable. measurement delegates to the proven row-major path so its
+// lead is preserved. transpose is 64x64 blocked (transpose64), amortized one per
+// measurement round.
 // ---------------------------------------------------------------------------
 
-// In-place transpose of a 64x64 bit matrix stored as 64 u64 rows: bit b of a[r]
-// is M[r][b]; afterwards bit r of a[b] is M[r][b]. Hacker's Delight (6 passes of
-// mask/shift/swap) -- O(64 log 64) word ops vs 64*64 scalar bit moves. This is the
-// core of the blocked tableau transpose: it replaces the old bit-by-bit to_col /
-// to_row (O(rows*nq), 8+ seconds at n=65536).
+// in-place transpose of a 64x64 bit matrix stored as 64 u64 rows: bit b of a[r]
+// is M[r][b]; after, bit r of a[b] is M[r][b]. Hacker's Delight (6 mask/shift
+// passes) -- O(64 log 64) word ops, not 64*64 bit moves. core of to_col/to_row;
+// replaced the old bit-by-bit transpose (8+ seconds at n=65536).
 #[inline]
 fn transpose64(a: &mut [u64; 64]) {
-    // LSB-column convention (bit b of a[r] is column b): swap a[k]'s high half
-    // with a[k+j]'s low half. (Hacker's Delight uses MSB-column; flipping which
-    // operand is shifted gives the LSB form -- verified against a naive transpose.)
+    // LSB-column (bit b of a[r] is column b): swap a[k]'s high half with a[k+j]'s
+    // low half. Hacker's Delight is MSB-column; flipping the shifted operand gives
+    // the LSB form -- verified against a naive transpose.
     let mut j = 32usize;
     let mut m = 0x0000_0000_FFFF_FFFFu64;
     while j != 0 {
@@ -898,10 +887,9 @@ fn transpose64(a: &mut [u64; 64]) {
     }
 }
 
-// Two disjoint &mut plane slices (length rw each) from one column-major Vec,
-// returned in (plane p, plane q) order; requires p != q. split_at_mut keeps the
-// two-qubit gate kernels bounds-check-free, so they vectorize like the 1-qubit
-// ones (a 2-qubit gate touches two whole planes).
+// two disjoint &mut plane slices (length rw) from one col-major Vec, in (plane p,
+// plane q) order; requires p != q. split_at_mut keeps the 2-qubit kernels
+// bounds-check-free, so they vectorize like the 1-qubit ones.
 #[inline]
 fn planes_mut(v: &mut [u64], p: usize, q: usize, rw: usize) -> (&mut [u64], &mut [u64]) {
     if p < q {
@@ -913,12 +901,11 @@ fn planes_mut(v: &mut [u64], p: usize, q: usize, rw: usize) -> (&mut [u64], &mut
     }
 }
 
-// Column-major gate kernels. A qubit's plane is rw contiguous words, so a gate is
-// a vector sweep over length-rw slices. Passing slices (not self.xc[base+k]
-// indexing) drops the per-element bounds check and lets LLVM emit NEON -- the SIMD
-// path that pulls large-n gates ahead of stim. `sign` is the sign bit-plane. These
-// are the single source of the col-major gate math (both gate() and run() call
-// them; #[inline] folds them back into the hot loop, no per-gate call cost).
+// col-major gate kernels. a qubit's plane is rw contiguous words, so a gate is a
+// vector sweep over length-rw slices. passing slices (not indexed access) drops
+// the bounds check and lets LLVM emit NEON -- the SIMD path that pulls large-n
+// gates ahead of stim. `sign` is the sign plane. #[inline]: one source for both
+// gate() and run(), folded into the hot loop with no per-gate call cost.
 #[inline]
 fn k_h(sign: &mut [u64], x: &mut [u64], z: &mut [u64]) {
     for ((s, xa), za) in sign.iter_mut().zip(x.iter_mut()).zip(z.iter_mut()) {
@@ -960,9 +947,8 @@ fn k_z(sign: &mut [u64], x: &[u64]) {
         *s ^= xv;
     }
 }
-// CX a->b: x_b ^= x_a; z_a ^= z_b; sign ^= x_a & z_b & (x_b ^ z_a ^ 1). Sign uses
-// the OLD x_b, z_a (read before the updates). Planes: xa read, za read+write, xb
-// read+write, zb read.
+// CX a->b: x_b ^= x_a; z_a ^= z_b; sign ^= x_a & z_b & (x_b ^ z_a ^ 1). sign uses
+// the OLD x_b, z_a (read before the updates).
 #[inline]
 fn k_cx(sign: &mut [u64], xa: &[u64], za: &mut [u64], xb: &mut [u64], zb: &[u64]) {
     for ((((s, &xav), zav), xbv), &zbv) in sign
@@ -977,8 +963,7 @@ fn k_cx(sign: &mut [u64], xa: &[u64], za: &mut [u64], xb: &mut [u64], zb: &[u64]
         *zav ^= zbv;
     }
 }
-// CZ (symmetric): z_a ^= x_b; z_b ^= x_a; sign ^= x_a & x_b & (z_a ^ z_b). Planes:
-// xa read, za read+write, xb read, zb read+write.
+// CZ (symmetric): z_a ^= x_b; z_b ^= x_a; sign ^= x_a & x_b & (z_a ^ z_b).
 #[inline]
 fn k_cz(sign: &mut [u64], xa: &[u64], za: &mut [u64], xb: &[u64], zb: &mut [u64]) {
     for ((((s, &xav), zav), &xbv), zbv) in sign
@@ -1021,9 +1006,9 @@ pub struct ColTableau {
 }
 
 impl ColTableau {
-    // make the row-major engine authoritative (measurement reads it). Inverse of
-    // to_col: transpose col-major (nq x rows) back into row-major (rows x nq) in
-    // 64x64 blocks, each inner.xs/zs word written exactly once.
+    // make the row-major engine authoritative (measurement reads it). inverse of
+    // to_col: transpose col-major (nq x rows) back to row-major in 64x64 blocks,
+    // each inner.xs/zs word written exactly once.
     fn to_row(&mut self) {
         if self.layout == Layout::Row {
             return;
@@ -1059,10 +1044,9 @@ impl ColTableau {
         self.layout = Layout::Row;
     }
 
-    // make the column-major planes authoritative (gates touch them). Transpose the
-    // row-major (rows x nq) bit matrix into col-major (nq x rows) in 64x64 blocks
-    // via transpose64: each output word is written exactly once (no pre-zero), and
-    // the inner work is word-parallel, not bit-by-bit.
+    // make the col-major planes authoritative (gates touch them). transpose the
+    // row-major (rows x nq) matrix into col-major in 64x64 blocks via transpose64:
+    // each output word written exactly once (no pre-zero), word-parallel.
     fn to_col(&mut self) {
         if self.layout == Layout::Col {
             return;
@@ -1104,11 +1088,9 @@ impl ColTableau {
         self.layout = Layout::Col;
     }
 
-    // The one place col-major gate logic lives. Raw whole-plane op by opcode
-    // (0=H 1=S 2=S_DAG 3=X 4=Y 5=Z 6=CX 7=CZ 8=SWAP); b unused for 1-qubit.
-    // Caller must already be in Col layout (gates/run/apply_gate ensure it).
-    // #[inline] so the dispatch folds back into run()'s hot loop (single source,
-    // no call overhead per gate).
+    // the one place col-major gate logic lives. whole-plane op by opcode
+    // (0=H 1=S 2=S_DAG 3=X 4=Y 5=Z 6=CX 7=CZ 8=SWAP); b unused for 1-qubit. caller
+    // must already be Col layout. #[inline] folds the dispatch into run()'s hot loop.
     #[inline]
     fn gate(&mut self, op: u8, a: usize, b: usize) {
         let rw = self.rw;
@@ -1184,8 +1166,8 @@ impl ColTableau {
             zc: vec![0u64; n * rw],
             signc: vec![0u64; rw],
             // col-major IS authoritative from the start: build |0...0> directly here
-            // (O(n)) so a pure-gate run never pays the row->col transpose. inner is a
-            // valid |0...0> too (rebuilt from the planes on the first measurement).
+            // (O(n)) so a pure-gate run never pays the row->col transpose. inner is
+            // |0...0> too (rebuilt from the planes on the first measurement).
             layout: Layout::Col,
             inner: RowTableau::new(n, seed),
         };
@@ -1250,10 +1232,9 @@ impl ColTableau {
         self.gate(8, a, b);
     }
 
-    // Apply a compiled (opcode, a, b) gate stream in one call: one to_col for the
-    // whole batch -> no per-gate Python dispatch. The match dispatches to the same
-    // #[inline] kernels gate() uses; being small, they fold into this hot loop (no
-    // per-op call cost), so there is one source of the col-major gate math.
+    // apply a compiled (op, a, b) stream in one call: one to_col for the whole
+    // batch, no per-gate Python dispatch. dispatches to the same #[inline] kernels
+    // gate() uses, folded into this hot loop -> one source of the col-major math.
     fn run(&mut self, ops: Vec<(u8, u32, u32)>) {
         self.to_col();
         let rw = self.rw;
@@ -1299,15 +1280,14 @@ impl ColTableau {
         }
     }
 
-    // Batched Pauli-noise trajectory sampler (the fast path for Circuit.sample).
+    // batched Pauli-noise trajectory sampler (fast path for Circuit.sample).
     // instrs: (kind, x, y, z) with
-    //   kind 0 = gate(opcode=x, a=y, b=z)
+    //   kind 0 = gate(op=x, a=y, b=z)
     //   kind 1 = measure(sub=x: 0=M 1=MR 2=R, qubit=y) -- M/MR push a record bit
-    //   kind 2 = noise(branch_table=x); pick one branch ~ |weight|, apply its ops
-    // branches[i] = [(weight, [(opcode,a,b), ...]), ...] (precompiled in Python).
-    // One reused tableau, reset in place per shot; no per-gate Python dispatch.
-    // Returns (flat shots*num_meas bytes, num_meas). Non-Pauli / unknown ops never
-    // reach here (Python compiler falls back to its loop), so this stays Pauli-only.
+    //   kind 2 = noise(table=x): pick one branch ~ |weight|, apply its ops
+    // branches[i] = [(weight, [(op,a,b)..])..] (precompiled in Python). one reused
+    // tableau, reset per shot. returns (flat shots*num_meas bytes, num_meas).
+    // non-Pauli ops never reach here (Python falls back), so this stays Pauli-only.
     fn sample_batch(
         &self,
         instrs: Vec<(u8, u32, u32, u32)>,
@@ -1315,11 +1295,10 @@ impl ColTableau {
         shots: usize,
         seed: u64,
     ) -> (Vec<u8>, usize) {
-        // Parallel over fixed-size shot chunks (BATCH_CHUNK), like frame_sample:
-        // each chunk owns a tableau + deterministic per-chunk coin/noise RNGs, so
-        // results are reproducible regardless of core count. No shared reference
-        // run here (shots are fully independent) -> near-linear scaling. Returns a
-        // flat shots*num_meas byte buffer (Python views it as a uint8 array).
+        // parallel over fixed-size shot chunks (BATCH_CHUNK): each owns a tableau +
+        // deterministic per-chunk coin/noise RNGs -> reproducible regardless of core
+        // count. no shared reference (shots independent) -> near-linear. flat
+        // shots*num_meas byte buffer out (Python views it as a uint8 array).
         let num_meas = instrs.iter().filter(|&&(k, x, _, _)| k == 1 && x != 2).count();
         if num_meas == 0 || shots == 0 {
             return (vec![0u8; shots * num_meas], num_meas);
@@ -1345,16 +1324,15 @@ impl ColTableau {
         (out, num_meas)
     }
 
-    // Noiseless reference run for the frame sampler: returns the deterministic
-    // measurement bits, or None if ANY measurement is random (caller then uses the
-    // per-shot sample_batch -- a genuine coin the frame method can't model). This
-    // is CIRCUIT-ONLY (seed-independent: a deterministic outcome doesn't flip the
-    // coin), so CompiledSampler computes it ONCE and reuses it across sample()
-    // calls -- amortizing this serial pass over a whole LER sweep.
+    // noiseless reference run for the frame sampler: the deterministic measurement
+    // bits, or None if ANY measurement is random (caller falls back to sample_batch
+    // -- a genuine coin the frame method can't model). CIRCUIT-ONLY (seed-
+    // independent), so CompiledSampler computes it once and reuses it across
+    // sample() calls -- amortizing this serial pass over a whole LER sweep.
     fn frame_reference(&self, instrs: Vec<(u8, u32, u32, u32)>) -> Option<Vec<bool>> {
-        // Run on the COLUMN-MAJOR engine: gate replay is ~20x faster than the old
-        // row-major RowTableau path (the cache cliff we fixed for interactive
-        // gates). Only the measurements transpose to the row engine (`inner`).
+        // run on the col-major engine: gate replay is ~20x faster than the old
+        // row-major path (the cache cliff). only the measurements transpose to the
+        // row engine (`inner`).
         let mut refsim = ColTableau::new(self.nq, Some(0));
         let mut ref_bits: Vec<bool> = Vec::new();
         for &(kind, x, y, z) in &instrs {
@@ -1383,11 +1361,10 @@ impl ColTableau {
         Some(ref_bits)
     }
 
-    // Parallel Pauli-frame engine over `shots`, given a precomputed `ref_bits`
-    // (from frame_reference). Propagates bit-packed frames (64 shots/word,
-    // sign-free) + rare-error noise, recording ref_bit XOR frame_x[q]. Parallel
-    // over fixed-size shot chunks: rayon adapts to the core count; the chunk size
-    // is fixed (FRAME_CHUNK) so the result is reproducible regardless of cores.
+    // parallel Pauli-frame engine over `shots`, given precomputed `ref_bits` (from
+    // frame_reference). propagates bit-packed frames (64 shots/word, sign-free) +
+    // rare-error noise, recording ref_bit XOR frame_x[q]. fixed chunk size
+    // (FRAME_CHUNK) -> reproducible regardless of cores.
     fn frame_run(
         &self,
         instrs: Vec<(u8, u32, u32, u32)>,
@@ -1422,11 +1399,11 @@ impl ColTableau {
         (out, num_meas)
     }
 
-    // Quasiprobability importance estimator for <observable> under general noise.
+    // quasiprobability importance estimator for <observable> under general noise.
     // instrs: 0=gate(op,a,b), 2=noise(table=x). branches[i] = [(SIGNED weight,
-    // [(op,a,b)..]) ..] (op 9 = reset). Parallel over fixed-size shot chunks (rayon;
-    // reproducible regardless of core count). Unbiased for ANY channel -- this is
-    // the differentiating coherent/amplitude path, off the Python/GIL loop.
+    // [(op,a,b)..])..] (op 9 = reset). parallel over fixed chunks, reproducible
+    // regardless of cores. unbiased for ANY channel -- the differentiating
+    // coherent/amplitude path, off the Python/GIL loop.
     fn estimate(
         &self,
         instrs: Vec<(u8, u32, u32, u32)>,

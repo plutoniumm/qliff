@@ -41,9 +41,9 @@ class Smoke(Question):
 
     def test_version(self):
         """
-        Version is sourced from the Rust crate and equals 0.1.0.
+        Version is sourced from the Rust crate and equals 1.0.0.
         """
-        self.assertEqual(qliff.__version__, "0.1.0", msg="version must be 0.1.0")
+        self.assertEqual(qliff.__version__, "1.0.0", msg="version must be 1.0.0")
 
 
 class TableauTests(Question):

@@ -5,8 +5,8 @@
 - **Fast core, Python surface.** The tableau lives in a native Rust core (PyO3 + setuptools-rust); everything you read, extend, or override is plain Python.
 - **Reads like paper.** The API is stim-style uppercase, so circuits look the way you write them by hand.
 
-::: warning Early development (0.1.0)
-APIs may change freely pre-1.0.
+::: tip Stable API (1.0.0)
+The public API is stable; breaking changes bump the major version.
 :::
 
 ## Install
