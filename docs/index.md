@@ -2,7 +2,7 @@
 layout: home
 
 hero:
-  name: "aaronson"
+  name: "qliff"
   text: "Clifford + noisy stabilizer simulator"
   tagline: "Native Rust core. Stim-style Python API."
   actions:
@@ -14,7 +14,7 @@ hero:
       link: /api
     - theme: alt
       text: GitHub
-      link: https://github.com/plutoniumm/aaronson
+      link: https://github.com/plutoniumm/qliff
 
 features:
   - title: "Clifford simulation"

@@ -1,6 +1,6 @@
 # Testing
 
-aaronson's tests run as an "exam" framework, adapted from
+qliff's tests run as an "exam" framework, adapted from
 [plutoniumm/qudit](https://github.com/plutoniumm/qudit).
 
 Each test file is a standalone script. It builds an `Exam` over a `Question`

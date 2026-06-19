@@ -3,7 +3,7 @@
 The top-level surface:
 
 ```python
-from aaronson import Simulator, Circuit, PauliString, expectation, fidelity
+from qliff import Simulator, Circuit, PauliString, expectation, fidelity
 ```
 
 | Name | What it is |
@@ -28,7 +28,7 @@ A Clifford stabilizer simulator. Starts in $|0\dots0\rangle$. Pass an integer
 Gate methods **return `self`**, so operations chain:
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 print(Simulator(2).H(0).CX(0, 1).canon())
 # ['+XX', '+ZZ']
@@ -54,7 +54,7 @@ Each returns `self`. Accepts one or more targets.
 | `Z(*q)` | Pauli $Z$ |
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 print(Simulator(1).H(0).S(0).canon())
 # ['+Y']
@@ -72,7 +72,7 @@ Each returns `self`. Takes flattened `(control, target)` pairs.
 | `SWAP(*t)` | Swap two qubits |
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 ghz = Simulator(3).H(0).CX(0, 1, 1, 2)
 print(ghz.canon())
@@ -89,7 +89,7 @@ print(ghz.canon())
 | `reset(*q)` | `self` | Alias for `R`. |
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 s = Simulator(2).X(0)
 print(s.M(0), s.M(1))   # 1 0
@@ -143,7 +143,7 @@ group. Two states are equal **iff** their canonical stabilizers match — so thi
 the tool for equality checks.
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 a = Simulator(2).H(0).CX(0, 1)
 b = Simulator(2).H(1).CX(1, 0)

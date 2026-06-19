@@ -8,7 +8,7 @@ try:
 
     rust_extensions = [
         RustExtension(
-            "aaronson._core",
+            "qliff._core",
             path="Cargo.toml",
             binding=Binding.PyO3,
             py_limited_api=True,
@@ -21,7 +21,7 @@ with open("README.md", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="aaronson",
+    name="qliff",
     version="0.1.0",
     description=(
         "Clifford + noisy stabilizer simulator: noise-free and noisy "
@@ -31,7 +31,7 @@ setup(
     long_description_content_type="text/markdown",
     author="plutoniumm",
     author_email="haskell-game@manav.ch",
-    url="https://github.com/plutoniumm/aaronson",
+    url="https://github.com/plutoniumm/qliff",
     license="MIT",
     keywords=[
         "quantum",
@@ -50,7 +50,7 @@ setup(
         "Topic :: Scientific/Engineering :: Physics",
     ],
     python_requires=">=3.11",
-    packages=find_packages(include=["aaronson", "aaronson.*"]),
+    packages=find_packages(include=["qliff", "qliff.*"]),
     install_requires=["numpy"],
     extras_require={
         "dev": ["setuptools-rust", "twine", "black", "wheel"],

@@ -873,6 +873,127 @@ impl RowTableau {
 // later optimization.
 // ---------------------------------------------------------------------------
 
+// In-place transpose of a 64x64 bit matrix stored as 64 u64 rows: bit b of a[r]
+// is M[r][b]; afterwards bit r of a[b] is M[r][b]. Hacker's Delight (6 passes of
+// mask/shift/swap) -- O(64 log 64) word ops vs 64*64 scalar bit moves. This is the
+// core of the blocked tableau transpose: it replaces the old bit-by-bit to_col /
+// to_row (O(rows*nq), 8+ seconds at n=65536).
+#[inline]
+fn transpose64(a: &mut [u64; 64]) {
+    // LSB-column convention (bit b of a[r] is column b): swap a[k]'s high half
+    // with a[k+j]'s low half. (Hacker's Delight uses MSB-column; flipping which
+    // operand is shifted gives the LSB form -- verified against a naive transpose.)
+    let mut j = 32usize;
+    let mut m = 0x0000_0000_FFFF_FFFFu64;
+    while j != 0 {
+        let mut k = 0usize;
+        while k < 64 {
+            let t = ((a[k] >> j) ^ a[k + j]) & m;
+            a[k] ^= t << j;
+            a[k + j] ^= t;
+            k = (k + j + 1) & !j;
+        }
+        j >>= 1;
+        m ^= m << j;
+    }
+}
+
+// Two disjoint &mut plane slices (length rw each) from one column-major Vec,
+// returned in (plane p, plane q) order; requires p != q. split_at_mut keeps the
+// two-qubit gate kernels bounds-check-free, so they vectorize like the 1-qubit
+// ones (a 2-qubit gate touches two whole planes).
+#[inline]
+fn planes_mut(v: &mut [u64], p: usize, q: usize, rw: usize) -> (&mut [u64], &mut [u64]) {
+    if p < q {
+        let (lo, hi) = v.split_at_mut(q * rw);
+        (&mut lo[p * rw..p * rw + rw], &mut hi[..rw])
+    } else {
+        let (lo, hi) = v.split_at_mut(p * rw);
+        (&mut hi[..rw], &mut lo[q * rw..q * rw + rw])
+    }
+}
+
+// Column-major gate kernels. A qubit's plane is rw contiguous words, so a gate is
+// a vector sweep over length-rw slices. Passing slices (not self.xc[base+k]
+// indexing) drops the per-element bounds check and lets LLVM emit NEON -- the SIMD
+// path that pulls large-n gates ahead of stim. `sign` is the sign bit-plane. These
+// are the single source of the col-major gate math (both gate() and run() call
+// them; #[inline] folds them back into the hot loop, no per-gate call cost).
+#[inline]
+fn k_h(sign: &mut [u64], x: &mut [u64], z: &mut [u64]) {
+    for ((s, xa), za) in sign.iter_mut().zip(x.iter_mut()).zip(z.iter_mut()) {
+        let (xv, zv) = (*xa, *za);
+        *s ^= xv & zv;
+        *xa = zv;
+        *za = xv;
+    }
+}
+#[inline]
+fn k_s(sign: &mut [u64], x: &[u64], z: &mut [u64]) {
+    for ((s, &xv), za) in sign.iter_mut().zip(x.iter()).zip(z.iter_mut()) {
+        *s ^= xv & *za;
+        *za ^= xv;
+    }
+}
+#[inline]
+fn k_sdag(sign: &mut [u64], x: &[u64], z: &mut [u64]) {
+    for ((s, &xv), za) in sign.iter_mut().zip(x.iter()).zip(z.iter_mut()) {
+        *s ^= xv & !*za;
+        *za ^= xv;
+    }
+}
+#[inline]
+fn k_x(sign: &mut [u64], z: &[u64]) {
+    for (s, &zv) in sign.iter_mut().zip(z.iter()) {
+        *s ^= zv;
+    }
+}
+#[inline]
+fn k_y(sign: &mut [u64], x: &[u64], z: &[u64]) {
+    for ((s, &xv), &zv) in sign.iter_mut().zip(x.iter()).zip(z.iter()) {
+        *s ^= xv ^ zv;
+    }
+}
+#[inline]
+fn k_z(sign: &mut [u64], x: &[u64]) {
+    for (s, &xv) in sign.iter_mut().zip(x.iter()) {
+        *s ^= xv;
+    }
+}
+// CX a->b: x_b ^= x_a; z_a ^= z_b; sign ^= x_a & z_b & (x_b ^ z_a ^ 1). Sign uses
+// the OLD x_b, z_a (read before the updates). Planes: xa read, za read+write, xb
+// read+write, zb read.
+#[inline]
+fn k_cx(sign: &mut [u64], xa: &[u64], za: &mut [u64], xb: &mut [u64], zb: &[u64]) {
+    for ((((s, &xav), zav), xbv), &zbv) in sign
+        .iter_mut()
+        .zip(xa.iter())
+        .zip(za.iter_mut())
+        .zip(xb.iter_mut())
+        .zip(zb.iter())
+    {
+        *s ^= xav & zbv & (*xbv ^ *zav ^ !0u64);
+        *xbv ^= xav;
+        *zav ^= zbv;
+    }
+}
+// CZ (symmetric): z_a ^= x_b; z_b ^= x_a; sign ^= x_a & x_b & (z_a ^ z_b). Planes:
+// xa read, za read+write, xb read, zb read+write.
+#[inline]
+fn k_cz(sign: &mut [u64], xa: &[u64], za: &mut [u64], xb: &[u64], zb: &mut [u64]) {
+    for ((((s, &xav), zav), &xbv), zbv) in sign
+        .iter_mut()
+        .zip(xa.iter())
+        .zip(za.iter_mut())
+        .zip(xb.iter())
+        .zip(zb.iter_mut())
+    {
+        *s ^= xav & xbv & (*zav ^ *zbv);
+        *zav ^= xbv;
+        *zbv ^= xav;
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Layout {
     Row,
@@ -900,70 +1021,84 @@ pub struct ColTableau {
 }
 
 impl ColTableau {
-    // make the row-major engine authoritative (measurement reads it).
+    // make the row-major engine authoritative (measurement reads it). Inverse of
+    // to_col: transpose col-major (nq x rows) back into row-major (rows x nq) in
+    // 64x64 blocks, each inner.xs/zs word written exactly once.
     fn to_row(&mut self) {
         if self.layout == Layout::Row {
             return;
         }
-        let (w, rw) = (self.w, self.rw);
-        for v in self.inner.xs.iter_mut() {
-            *v = 0;
-        }
-        for v in self.inner.zs.iter_mut() {
-            *v = 0;
-        }
-        for j in 0..self.nq {
-            let cbase = j * rw;
-            let jw = j >> 6;
-            let jbit = 1u64 << (j & 63);
-            for r in 0..self.rows {
-                let cw = cbase + (r >> 6);
-                let rb = r & 63;
-                if (self.xc[cw] >> rb) & 1 == 1 {
-                    self.inner.xs[r * w + jw] |= jbit;
+        let (w, rw, rows, nq) = (self.w, self.rw, self.rows, self.nq);
+        let mut j0 = 0;
+        while j0 < nq {
+            let cb = (nq - j0).min(64);
+            let jw = j0 >> 6;
+            let mut r0 = 0;
+            while r0 < rows {
+                let rb = (rows - r0).min(64);
+                let rword = r0 >> 6;
+                let mut bx = [0u64; 64];
+                let mut bz = [0u64; 64];
+                for bb in 0..cb {
+                    bx[bb] = self.xc[(j0 + bb) * rw + rword];
+                    bz[bb] = self.zc[(j0 + bb) * rw + rword];
                 }
-                if (self.zc[cw] >> rb) & 1 == 1 {
-                    self.inner.zs[r * w + jw] |= jbit;
+                transpose64(&mut bx);
+                transpose64(&mut bz);
+                for rr in 0..rb {
+                    self.inner.xs[(r0 + rr) * w + jw] = bx[rr];
+                    self.inner.zs[(r0 + rr) * w + jw] = bz[rr];
                 }
+                r0 += 64;
             }
+            j0 += 64;
         }
-        for r in 0..self.rows {
+        for r in 0..rows {
             self.inner.signs[r] = ((self.signc[r >> 6] >> (r & 63)) & 1) as u8;
         }
         self.layout = Layout::Row;
     }
 
-    // make the column-major planes authoritative (gates touch them).
+    // make the column-major planes authoritative (gates touch them). Transpose the
+    // row-major (rows x nq) bit matrix into col-major (nq x rows) in 64x64 blocks
+    // via transpose64: each output word is written exactly once (no pre-zero), and
+    // the inner work is word-parallel, not bit-by-bit.
     fn to_col(&mut self) {
         if self.layout == Layout::Col {
             return;
         }
-        let (w, rw) = (self.w, self.rw);
-        for v in self.xc.iter_mut() {
-            *v = 0;
+        let (w, rw, rows, nq) = (self.w, self.rw, self.rows, self.nq);
+        let mut r0 = 0;
+        while r0 < rows {
+            let rb = (rows - r0).min(64);
+            let rword = r0 >> 6;
+            let mut j0 = 0;
+            while j0 < nq {
+                let cb = (nq - j0).min(64);
+                let jw = j0 >> 6;
+                let mut bx = [0u64; 64];
+                let mut bz = [0u64; 64];
+                for rr in 0..rb {
+                    bx[rr] = self.inner.xs[(r0 + rr) * w + jw];
+                    bz[rr] = self.inner.zs[(r0 + rr) * w + jw];
+                }
+                transpose64(&mut bx);
+                transpose64(&mut bz);
+                for bb in 0..cb {
+                    self.xc[(j0 + bb) * rw + rword] = bx[bb];
+                    self.zc[(j0 + bb) * rw + rword] = bz[bb];
+                }
+                j0 += 64;
+            }
+            r0 += 64;
         }
-        for v in self.zc.iter_mut() {
-            *v = 0;
-        }
+        // sign is a 1-bit-per-row plane: pack inner.signs into signc (O(rows)).
         for v in self.signc.iter_mut() {
             *v = 0;
         }
-        for r in 0..self.rows {
-            let rbase = r * w;
-            let rword = r >> 6;
-            let rbit = 1u64 << (r & 63);
-            for j in 0..self.nq {
-                let rwd = rbase + (j >> 6);
-                let jb = j & 63;
-                if (self.inner.xs[rwd] >> jb) & 1 == 1 {
-                    self.xc[j * rw + rword] |= rbit;
-                }
-                if (self.inner.zs[rwd] >> jb) & 1 == 1 {
-                    self.zc[j * rw + rword] |= rbit;
-                }
-            }
+        for r in 0..rows {
             if self.inner.signs[r] != 0 {
-                self.signc[rword] |= rbit;
+                self.signc[r >> 6] |= 1u64 << (r & 63);
             }
         }
         self.layout = Layout::Col;
@@ -979,77 +1114,37 @@ impl ColTableau {
         let rw = self.rw;
         let base = a * rw;
         match op {
-            // H: swap x<->z; sign ^= x & z
-            0 => {
-                for k in 0..rw {
-                    let xa = self.xc[base + k];
-                    let za = self.zc[base + k];
-                    self.signc[k] ^= xa & za;
-                    self.xc[base + k] = za;
-                    self.zc[base + k] = xa;
-                }
-            }
-            // S: z ^= x; sign ^= x & z (z read before update)
-            1 => {
-                for k in 0..rw {
-                    let xa = self.xc[base + k];
-                    let za = self.zc[base + k];
-                    self.signc[k] ^= xa & za;
-                    self.zc[base + k] = za ^ xa;
-                }
-            }
-            // S-dagger: z ^= x; sign ^= x & !z
-            2 => {
-                for k in 0..rw {
-                    let xa = self.xc[base + k];
-                    let za = self.zc[base + k];
-                    self.signc[k] ^= xa & !za;
-                    self.zc[base + k] = za ^ xa;
-                }
-            }
-            // X: sign ^= z
-            3 => {
-                for k in 0..rw {
-                    self.signc[k] ^= self.zc[base + k];
-                }
-            }
-            // Y: sign ^= x ^ z
-            4 => {
-                for k in 0..rw {
-                    self.signc[k] ^= self.xc[base + k] ^ self.zc[base + k];
-                }
-            }
-            // Z: sign ^= x
-            5 => {
-                for k in 0..rw {
-                    self.signc[k] ^= self.xc[base + k];
-                }
-            }
-            // CNOT a->b: x_b ^= x_a; z_a ^= z_b; sign ^= x_a & z_b & (x_b ^ z_a ^ 1)
+            0 => k_h(
+                &mut self.signc[..rw],
+                &mut self.xc[base..base + rw],
+                &mut self.zc[base..base + rw],
+            ),
+            1 => k_s(
+                &mut self.signc[..rw],
+                &self.xc[base..base + rw],
+                &mut self.zc[base..base + rw],
+            ),
+            2 => k_sdag(
+                &mut self.signc[..rw],
+                &self.xc[base..base + rw],
+                &mut self.zc[base..base + rw],
+            ),
+            3 => k_x(&mut self.signc[..rw], &self.zc[base..base + rw]),
+            4 => k_y(
+                &mut self.signc[..rw],
+                &self.xc[base..base + rw],
+                &self.zc[base..base + rw],
+            ),
+            5 => k_z(&mut self.signc[..rw], &self.xc[base..base + rw]),
             6 => {
-                let rb = b * rw;
-                for k in 0..rw {
-                    let xa = self.xc[base + k];
-                    let za = self.zc[base + k];
-                    let xb = self.xc[rb + k];
-                    let zb = self.zc[rb + k];
-                    self.signc[k] ^= xa & zb & (xb ^ za ^ !0u64);
-                    self.xc[rb + k] = xb ^ xa;
-                    self.zc[base + k] = za ^ zb;
-                }
+                let (xa, xb) = planes_mut(&mut self.xc, a, b, rw);
+                let (za, zb) = planes_mut(&mut self.zc, a, b, rw);
+                k_cx(&mut self.signc[..rw], xa, za, xb, zb);
             }
-            // CZ (symmetric): z_a ^= x_b; z_b ^= x_a; sign ^= x_a & x_b & (z_a ^ z_b)
             7 => {
-                let rb = b * rw;
-                for k in 0..rw {
-                    let xa = self.xc[base + k];
-                    let za = self.zc[base + k];
-                    let xb = self.xc[rb + k];
-                    let zb = self.zc[rb + k];
-                    self.signc[k] ^= xa & xb & (za ^ zb);
-                    self.zc[base + k] = za ^ xb;
-                    self.zc[rb + k] = zb ^ xa;
-                }
+                let (xa, xb) = planes_mut(&mut self.xc, a, b, rw);
+                let (za, zb) = planes_mut(&mut self.zc, a, b, rw);
+                k_cz(&mut self.signc[..rw], xa, za, xb, zb);
             }
             8 => {
                 self.gate(6, a, b);
@@ -1080,7 +1175,7 @@ impl ColTableau {
     fn new(n: usize, seed: Option<u64>) -> Self {
         let rows = 2 * n + 1;
         let rw = (rows + 63) / 64;
-        ColTableau {
+        let mut t = ColTableau {
             nq: n,
             rows,
             w: (n + 63) / 64,
@@ -1088,10 +1183,20 @@ impl ColTableau {
             xc: vec![0u64; n * rw],
             zc: vec![0u64; n * rw],
             signc: vec![0u64; rw],
-            // inner carries the |0...0> init; first gate transposes it to col
-            layout: Layout::Row,
+            // col-major IS authoritative from the start: build |0...0> directly here
+            // (O(n)) so a pure-gate run never pays the row->col transpose. inner is a
+            // valid |0...0> too (rebuilt from the planes on the first measurement).
+            layout: Layout::Col,
             inner: RowTableau::new(n, seed),
+        };
+        // |0...0>: destab j = X_j -> xc plane j, bit at row j;
+        //          stab  j = Z_j -> zc plane j, bit at row n+j.
+        for j in 0..n {
+            t.xc[j * rw + (j >> 6)] |= 1u64 << (j & 63);
+            let s = n + j;
+            t.zc[j * rw + (s >> 6)] |= 1u64 << (s & 63);
         }
+        t
     }
 
     #[getter]
@@ -1146,81 +1251,49 @@ impl ColTableau {
     }
 
     // Apply a compiled (opcode, a, b) gate stream in one call: one to_col for the
-    // whole batch -> no per-gate Python dispatch. Gate bodies are INLINED here
-    // (not via gate()) so this hot batched loop stays fast -- gate() is too big to
-    // inline, and calling it per op costs ~1.7x at large n. The pymethods and
-    // apply_gate still share gate() for DRY; only this hot loop duplicates it.
+    // whole batch -> no per-gate Python dispatch. The match dispatches to the same
+    // #[inline] kernels gate() uses; being small, they fold into this hot loop (no
+    // per-op call cost), so there is one source of the col-major gate math.
     fn run(&mut self, ops: Vec<(u8, u32, u32)>) {
         self.to_col();
         let rw = self.rw;
         for (op, a, b) in ops {
-            let base = (a as usize) * rw;
+            let (a, b) = (a as usize, b as usize);
+            let base = a * rw;
             match op {
-                0 => {
-                    for k in 0..rw {
-                        let xa = self.xc[base + k];
-                        let za = self.zc[base + k];
-                        self.signc[k] ^= xa & za;
-                        self.xc[base + k] = za;
-                        self.zc[base + k] = xa;
-                    }
-                }
-                1 => {
-                    for k in 0..rw {
-                        let xa = self.xc[base + k];
-                        let za = self.zc[base + k];
-                        self.signc[k] ^= xa & za;
-                        self.zc[base + k] = za ^ xa;
-                    }
-                }
-                2 => {
-                    for k in 0..rw {
-                        let xa = self.xc[base + k];
-                        let za = self.zc[base + k];
-                        self.signc[k] ^= xa & !za;
-                        self.zc[base + k] = za ^ xa;
-                    }
-                }
-                3 => {
-                    for k in 0..rw {
-                        self.signc[k] ^= self.zc[base + k];
-                    }
-                }
-                4 => {
-                    for k in 0..rw {
-                        self.signc[k] ^= self.xc[base + k] ^ self.zc[base + k];
-                    }
-                }
-                5 => {
-                    for k in 0..rw {
-                        self.signc[k] ^= self.xc[base + k];
-                    }
-                }
+                0 => k_h(
+                    &mut self.signc[..rw],
+                    &mut self.xc[base..base + rw],
+                    &mut self.zc[base..base + rw],
+                ),
+                1 => k_s(
+                    &mut self.signc[..rw],
+                    &self.xc[base..base + rw],
+                    &mut self.zc[base..base + rw],
+                ),
+                2 => k_sdag(
+                    &mut self.signc[..rw],
+                    &self.xc[base..base + rw],
+                    &mut self.zc[base..base + rw],
+                ),
+                3 => k_x(&mut self.signc[..rw], &self.zc[base..base + rw]),
+                4 => k_y(
+                    &mut self.signc[..rw],
+                    &self.xc[base..base + rw],
+                    &self.zc[base..base + rw],
+                ),
+                5 => k_z(&mut self.signc[..rw], &self.xc[base..base + rw]),
                 6 => {
-                    let rb = (b as usize) * rw;
-                    for k in 0..rw {
-                        let xa = self.xc[base + k];
-                        let za = self.zc[base + k];
-                        let xb = self.xc[rb + k];
-                        let zb = self.zc[rb + k];
-                        self.signc[k] ^= xa & zb & (xb ^ za ^ !0u64);
-                        self.xc[rb + k] = xb ^ xa;
-                        self.zc[base + k] = za ^ zb;
-                    }
+                    let (xa, xb) = planes_mut(&mut self.xc, a, b, rw);
+                    let (za, zb) = planes_mut(&mut self.zc, a, b, rw);
+                    k_cx(&mut self.signc[..rw], xa, za, xb, zb);
                 }
                 7 => {
-                    let rb = (b as usize) * rw;
-                    for k in 0..rw {
-                        let xa = self.xc[base + k];
-                        let za = self.zc[base + k];
-                        let xb = self.xc[rb + k];
-                        let zb = self.zc[rb + k];
-                        self.signc[k] ^= xa & xb & (za ^ zb);
-                        self.zc[base + k] = za ^ xb;
-                        self.zc[rb + k] = zb ^ xa;
-                    }
+                    let (xa, xb) = planes_mut(&mut self.xc, a, b, rw);
+                    let (za, zb) = planes_mut(&mut self.zc, a, b, rw);
+                    k_cz(&mut self.signc[..rw], xa, za, xb, zb);
                 }
-                8 => self.swap(a as usize, b as usize),
+                8 => self.swap(a, b),
                 _ => {}
             }
         }

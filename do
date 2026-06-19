@@ -81,14 +81,14 @@ build_release() {
     -Clink-arg=dynamic_lookup \
     -Clink-arg=-Wl,-install_name,@rpath/_core.abi3.so
 
-  cp target/release/lib_core.dylib aaronson/_core.abi3.so
+  cp target/release/lib_core.dylib qliff/_core.abi3.so
 }
 
 build() {
   has python cargo rustc
   ensure_build_deps
   cd "$ROOT"
-  rm -rf build dist aaronson.egg-info
+  rm -rf build dist qliff.egg-info
   python setup.py sdist bdist_wheel
 }
 
@@ -119,14 +119,14 @@ lint() {
 
   if [ "${1:-}" = "--fix" ] || [ "${1:-}" = "fix" ]; then
     python -m view.lint --fix
-    python -m black -q aaronson test view
+    python -m black -q qliff test view
   else
     python -m view.lint
-    python -m black --check -q aaronson test view
+    python -m black --check -q qliff test view
   fi
 
   if command -v eastwood >/dev/null 2>&1; then
-    eastwood -lang python aaronson
+    eastwood -lang python qliff
   fi
 }
 
@@ -152,6 +152,18 @@ docs() {
   esac
 }
 
+# compile a LaTeX/beamer file with tectonic. Args are passed straight through, so
+# any path works (incl. files in subdirs; tectonic resolves figs/ relative to the
+# file and writes the pdf next to it) and you can append tectonic flags.
+tex() {
+  has tectonic
+  if [ "$#" -eq 0 ]; then
+    echo "usage: ./do tex <file.tex> [tectonic args]" >&2
+    exit 1
+  fi
+  tectonic "$@"
+}
+
 case "${1:-}" in
   develop) develop ;;
   build)   build ;;
@@ -160,8 +172,9 @@ case "${1:-}" in
   deploy)  deploy ;;
   lint)    shift; lint "$@" ;;
   docs)    shift; docs "$@" ;;
+  tex)     shift; tex "$@" ;;
   *)
-    echo "usage: ./do {develop|build|test|bench|deploy|lint|docs}" >&2
+    echo "usage: ./do {develop|build|test|bench|deploy|lint|docs|tex}" >&2
     exit 1
     ;;
 esac

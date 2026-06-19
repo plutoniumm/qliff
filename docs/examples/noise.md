@@ -11,8 +11,8 @@ Apply a bit-flip $X$ error with probability $p$ and sample the noisy
 measurement records.
 
 ```python
-from aaronson import Circuit
-from aaronson.noise import Sampler
+from qliff import Circuit
+from qliff.noise import Sampler
 
 c = Circuit(1)
 c.X_ERROR(0, 0.25)
@@ -30,8 +30,8 @@ About a quarter of the shots flip to `1`, matching the error rate $p = 0.25$.
 trajectories.
 
 ```python
-from aaronson import Circuit
-from aaronson.noise import Sampler
+from qliff import Circuit
+from qliff.noise import Sampler
 
 c = Circuit(1)
 c.H(0)
@@ -49,8 +49,8 @@ A coherent `RZ` rotation is not a Pauli channel, so `expect` reweights each
 trajectory by its signed quasiprobability weight.
 
 ```python
-from aaronson import Circuit
-from aaronson.noise import Sampler
+from qliff import Circuit
+from qliff.noise import Sampler
 
 c = Circuit(1)
 c.H(0).RZ(0, 0.3)
@@ -66,8 +66,8 @@ The estimate tracks the exact $\langle X\rangle = \cos\theta$.
 much lower variance.
 
 ```python
-from aaronson import Circuit
-from aaronson.noise import Sampler
+from qliff import Circuit
+from qliff.noise import Sampler
 
 c = Circuit(1)
 c.H(0).RZ(0, 0.3)
@@ -84,8 +84,8 @@ Subclass `Channel`: return an identity branch first, then `(weight, ops)` faults
 This is a pure $Z$ dephasing channel.
 
 ```python
-from aaronson import Circuit
-from aaronson.noise import Channel, Sampler
+from qliff import Circuit
+from qliff.noise import Channel, Sampler
 
 class Dephase(Channel):
     is_pauli = True

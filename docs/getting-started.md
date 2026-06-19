@@ -1,6 +1,6 @@
 # Getting Started
 
-`aaronson` is a Clifford **+** noisy stabilizer simulator.
+`qliff` is a Clifford **+** noisy stabilizer simulator.
 
 - **Fast core, Python surface.** The tableau lives in a native Rust core (PyO3 + setuptools-rust); everything you read, extend, or override is plain Python.
 - **Reads like paper.** The API is stim-style uppercase, so circuits look the way you write them by hand.
@@ -12,13 +12,13 @@ APIs may change freely pre-1.0.
 ## Install
 
 ```sh
-pip install aaronson
+pip install qliff
 ```
 
 The wheel ships the compiled core — no Rust toolchain needed. Verify it:
 
 ```sh
-python -c "from aaronson import Simulator; print(Simulator(2).H(0).CX(0,1).canon())"
+python -c "from qliff import Simulator; print(Simulator(2).H(0).CX(0,1).canon())"
 # ['+XX', '+ZZ']
 ```
 
@@ -47,7 +47,7 @@ The Bell pair is the "hello world" of stabilizer simulation. Three conventions:
 - Every gate method returns `self`, so calls chain.
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 sim = Simulator(2).H(0).CX(0, 1)
 

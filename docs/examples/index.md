@@ -1,6 +1,6 @@
 # Examples
 
-Copy-paste recipes for the things people actually run with `aaronson`. Each
+Copy-paste recipes for the things people actually run with `qliff`. Each
 example is a single runnable block — imports at the top, one line of intent, one
 line on what to expect. They build only on the documented API, so they keep
 working as you mix and match.

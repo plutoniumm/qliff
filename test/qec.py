@@ -7,8 +7,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from MDR import Exam, Question, load
 
-from aaronson import Circuit
-from aaronson.qec import (
+from qliff import Circuit
+from qliff.qec import (
     DetectorErrorModel,
     DetectorSampler,
     logical_fidelity,

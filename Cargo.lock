@@ -3,14 +3,6 @@
 version = 4
 
 [[package]]
-name = "aaronson"
-version = "0.1.0"
-dependencies = [
- "pyo3",
- "rayon",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -165,6 +157,14 @@ dependencies = [
  "pyo3-build-config",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "qliff"
+version = "0.1.0"
+dependencies = [
+ "pyo3",
+ "rayon",
 ]
 
 [[package]]

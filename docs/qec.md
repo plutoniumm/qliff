@@ -1,6 +1,6 @@
 # Error Correction
 
-`aaronson.qec` turns a noisy [`Circuit`](/circuit) into decoder inputs: detection
+`qliff.qec` turns a noisy [`Circuit`](/circuit) into decoder inputs: detection
 events, a detector error model, and the parity-check / matching exports built from
 it. **No decoder is bundled.** The exports drop straight into MWPM (pymatching),
 belief propagation, or an ML decoder. Ready-made code circuits let you jump
@@ -17,7 +17,7 @@ detectors and logical observable already declared.
 | `rotated_surface_code(distance, rounds, p)` | distance, rounds, depolarizing $p$ | rotated planar surface-code $Z$ memory |
 
 ```python
-from aaronson.qec import repetition_code, rotated_surface_code
+from qliff.qec import repetition_code, rotated_surface_code
 
 rep = repetition_code(distance=3, rounds=3, p=0.05)
 sur = rotated_surface_code(distance=3, rounds=3, p=0.01)
@@ -66,7 +66,7 @@ the labels. `logical_fidelity(predictions, observed)` returns $1 - \text{LER}$.
 
 ```python
 from pymatching import Matching
-from aaronson.qec import repetition_code, logical_fidelity
+from qliff.qec import repetition_code, logical_fidelity
 
 rep = repetition_code(distance=3, rounds=3, p=0.05)
 

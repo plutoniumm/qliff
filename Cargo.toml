@@ -1,10 +1,10 @@
 [package]
-name = "aaronson"
+name = "qliff"
 version = "0.1.0"
 edition = "2021"
 description = "Clifford + noisy stabilizer simulator (native core)"
 license = "MIT"
-repository = "https://github.com/plutoniumm/aaronson"
+repository = "https://github.com/plutoniumm/qliff"
 
 [lib]
 name = "_core"

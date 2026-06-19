@@ -1,6 +1,6 @@
 # Noise
 
-`aaronson.noise` simulates noisy circuits inside the stabilizer formalism. Each
+`qliff.noise` simulates noisy circuits inside the stabilizer formalism. Each
 channel is a quasiprobability mixture of stabilizer (Clifford) channels:
 
 $$\mathcal{E}(\cdot) = \sum_\mu q_\mu\, \mathcal{S}_\mu(\cdot).$$
@@ -70,8 +70,8 @@ faulty locations, and $F_k$ the conditional estimate. Since $F_k$ varies slowly
 with $k$, this cuts variance sharply at the same shot budget.
 
 ```python
-from aaronson import Circuit
-from aaronson.noise import Sampler
+from qliff import Circuit
+from qliff.noise import Sampler
 
 c = Circuit(1)
 c.H(0).RZ(0, 0.3)
@@ -94,8 +94,8 @@ first, then `(weight, ops)` faults (weights may be negative quasiprobabilities).
 No Rust or recompilation needed. Drop it into a circuit with `c.noise(channel, q)`.
 
 ```python
-from aaronson import Circuit
-from aaronson.noise import Channel
+from qliff import Circuit
+from qliff.noise import Channel
 
 
 class Dephase(Channel):

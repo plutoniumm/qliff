@@ -1,4 +1,4 @@
-# aaronson
+# qliff
 
 A Clifford stabilizer simulator with support for noisy and mid-circuit measurement-based simulation.
 
@@ -8,21 +8,21 @@ A Clifford stabilizer simulator with support for noisy and mid-circuit measureme
   ([arXiv:2512.07304](https://arxiv.org/abs/2512.07304)), "nearly as cheap as Pauli noise."
 - **Decoder-ready QEC primitives**: detectors, observables, detection-event sampling, a
   detector error model by exact Pauli-frame propagation, and exporters (parity-check matrix +
-  priors, matching weights, syndrome/label tensors). No decoder is bundled — these drop
-  straight into MWPM (pymatching), BP, or ML decoders.
+  priors, matching weights, syndrome/label tensors). These drop
+  directly into MWPM (pymatching), BP, or ML decoders.
 
 ## Install
 
 ```sh
-pip install aaronson
+pip install qliff
 ```
 
-Docs at [plutoniumm.github.io/aaronson](https://plutoniumm.github.io/aaronson/).
+Docs at [plutoniumm.github.io/qliff](https://plutoniumm.github.io/qliff/).
 
 ## Clifford simulation
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 s = Simulator(2).H(0).CX(0, 1)
 s.canon()        # ['+XX', '+ZZ']
@@ -56,7 +56,7 @@ Build `Circuit` with gate/noise methods, then sample or estimate.
 stratified importance sampling
 
 ```python
-from aaronson import Circuit
+from qliff import Circuit
 
 c = Circuit(1)
 c.H(0).DEPOLARIZE1(0, 0.1).M(0)
@@ -72,18 +72,18 @@ c.estimate("Z", 60000)  # ≈ 2p - 1
 ```
 
 Force the variance strategy with `c.estimate(obs, shots, stratify=False)` (flat) or `stratify=True`
-(stratified), or drive the sampler directly: `from aaronson.noise import Sampler`, then
+(stratified), or drive the sampler directly: `from qliff.noise import Sampler`, then
 `Sampler(c).expect(obs, shots, stratify=True)`. Add a custom channel by subclassing
-`aaronson.noise.Channel` and dropping it in with `c.noise(ch, q)`.
+`qliff.noise.Channel` and dropping it in with `c.noise(ch, q)`.
 
 ## Quantum error correction
 
-`aaronson.qec` ships code-circuit generators, so you can go straight to a logical-error-rate
+`qliff.qec` ships code-circuit generators, so you can go straight to a logical-error-rate
 curve. Any circuit's detectors and observables are declared with `c.detector(...)` /
 `c.observable(...)`, then turned into decoder inputs:
 
 ```python
-from aaronson.qec import rotated_surface_code, logical_fidelity
+from qliff.qec import rotated_surface_code, logical_fidelity
 from pymatching import Matching
 
 c = rotated_surface_code(distance=5, rounds=5, p=0.01)
@@ -103,7 +103,7 @@ fidelity = logical_fidelity(m.decode_batch(dets), flips)
 ## Extending
 
 Everything you'd customize lives in Python. Add a noise channel by subclassing
-`aaronson.noise.Channel` and returning its stabilizer-channel `branches`; plug in a custom
+`qliff.noise.Channel` and returning its stabilizer-channel `branches`; plug in a custom
 sampler or observable; export the DEM to whatever decoder you like. The Rust core stays a thin,
 fast tableau engine.
 

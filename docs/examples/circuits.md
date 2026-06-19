@@ -9,7 +9,7 @@ Prepare $|\Phi^+\rangle = (|00\rangle + |11\rangle)/\sqrt{2}$ and read its
 canonical stabilizer generators.
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 sim = Simulator(2).H(0).CX(0, 1)
 sim.canon()        # ['+XX', '+ZZ']
@@ -23,7 +23,7 @@ Spread one Hadamard across a CX chain to build
 $|\mathrm{GHZ}_n\rangle = (|0\dots0\rangle + |1\dots1\rangle)/\sqrt{2}$.
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 n = 4
 sim = Simulator(n).H(0)
@@ -40,7 +40,7 @@ The generators are $X^{\otimes n}$ plus the neighbouring $Z_iZ_{i+1}$ parities.
 Build a circuit, measure, and draw many shots at once with `Circuit.sample`.
 
 ```python
-from aaronson import Circuit
+from qliff import Circuit
 
 c = Circuit(2)
 c.H(0).CX(0, 1).M(0, 1)
@@ -56,7 +56,7 @@ proportion.
 Use `M`/`MR`/`R` mid-circuit and read the running outcomes off `sim.record`.
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 sim = Simulator(1, seed=0)
 sim.H(0)
@@ -76,7 +76,7 @@ Teleport a state from qubit 0 onto qubit 2, applying Pauli corrections
 conditioned on the two measured bits.
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 sim = Simulator(3, seed=0)
 sim.H(0)
@@ -99,7 +99,7 @@ $\langle X\rangle = +1$.
 untouched.
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 sim = Simulator(2).H(0).CX(0, 1)
 sim.peek("ZZ")         # +1

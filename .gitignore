@@ -6,9 +6,9 @@ dist/
 build/
 *.egg-info/
 
-aaronson/_core*.so
-aaronson/_core*.pyd
-aaronson/_core*.dylib
+qliff/_core*.so
+qliff/_core*.pyd
+qliff/_core*.dylib
 
 **/_reports/
 

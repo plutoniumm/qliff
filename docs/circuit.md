@@ -6,7 +6,7 @@ uppercase methods as the [`Simulator`](/api), then run it, sample it, or hand it
 to a noise or QEC sampler.
 
 ```python
-from aaronson import Circuit
+from qliff import Circuit
 
 c = Circuit(2)
 c.H(0).CX(0, 1).M(0, 1)
@@ -112,7 +112,7 @@ c.estimate("X", 20000, stratify=False)
 instance:
 
 ```python
-from aaronson.noise import BitFlip
+from qliff.noise import BitFlip
 
 c = Circuit(1)
 c.append("H", 0)

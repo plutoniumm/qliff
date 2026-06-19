@@ -11,7 +11,7 @@ and $Z$ bit lists plus a phase in $0\ldots3$: $0\to+1$, $1\to+i$, $2\to-1$,
 $3\to-i$. Valid observables are Hermitian, i.e. have even phase.
 
 ```python
-from aaronson import PauliString
+from qliff import PauliString
 
 p = PauliString.parse("-XYZ")
 ```
@@ -36,7 +36,7 @@ p = PauliString.parse("-XYZ")
 | `a * b` | Pauli product, tracking the $i$ phase exactly |
 
 ```python
-from aaronson import PauliString
+from qliff import PauliString
 
 x = PauliString.parse("X")
 z = PauliString.parse("Z")
@@ -66,7 +66,7 @@ Both live on the [`Simulator`](/api). `expectation` is a free-function alias for
   eigenspace.
 
 ```python
-from aaronson import Simulator
+from qliff import Simulator
 
 bell = Simulator(2).H(0).CX(0, 1)
 
@@ -82,7 +82,7 @@ simulators' stabilizer states. It measures each stabilizer generator of `a` on a
 copy of `b`, so the result is always a power of two.
 
 ```python
-from aaronson import Simulator, fidelity
+from qliff import Simulator, fidelity
 
 fidelity(Simulator(1), Simulator(1).H(0))   # 0.5
 

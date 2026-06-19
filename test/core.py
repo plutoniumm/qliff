@@ -8,10 +8,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from MDR import Exam, Question, load
 
-import aaronson
-from aaronson import Circuit, PauliString, Simulator, fidelity
-from aaronson.noise import BitFlip
-from aaronson.pauli import canonicalize, parse_signed
+import qliff
+from qliff import Circuit, PauliString, Simulator, fidelity
+from qliff.noise import BitFlip
+from qliff.pauli import canonicalize, parse_signed
 
 
 def _teleport(prepare, seed):
@@ -33,17 +33,17 @@ def _teleport(prepare, seed):
 class Smoke(Question):
     def test_import(self):
         """
-        `import aaronson` succeeds and exposes a version.
+        `import qliff` succeeds and exposes a version.
         """
         self.assertTrue(
-            hasattr(aaronson, "__version__"), msg="aaronson must expose __version__"
+            hasattr(qliff, "__version__"), msg="qliff must expose __version__"
         )
 
     def test_version(self):
         """
         Version is sourced from the Rust crate and equals 0.1.0.
         """
-        self.assertEqual(aaronson.__version__, "0.1.0", msg="version must be 0.1.0")
+        self.assertEqual(qliff.__version__, "0.1.0", msg="version must be 0.1.0")
 
 
 class TableauTests(Question):

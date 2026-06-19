@@ -9,8 +9,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from MDR import Exam, Question, load
 
-from aaronson import Circuit
-from aaronson.noise import AmplitudeDamping, Sampler
+from qliff import Circuit
+from qliff.noise import AmplitudeDamping, Sampler
 
 _H = np.array([[1, 1], [1, -1]], dtype=complex) / math.sqrt(2)
 _PAULIS = {

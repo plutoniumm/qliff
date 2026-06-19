@@ -10,7 +10,7 @@ Build a distance-$d$ bit-flip $Z$-memory circuit and sample its detection events
 and logical labels.
 
 ```python
-from aaronson.qec import repetition_code
+from qliff.qec import repetition_code
 
 rep = repetition_code(distance=3, rounds=3, p=0.05)
 dets, obs = rep.detector_sampler().sample(10000, seed=0)
@@ -25,7 +25,7 @@ The same interface scales to a 2-D code; here a distance-3 rotated surface code
 under depolarizing noise.
 
 ```python
-from aaronson.qec import rotated_surface_code
+from qliff.qec import rotated_surface_code
 
 sur = rotated_surface_code(distance=3, rounds=3, p=0.01)
 dets, obs = sur.detector_sampler().sample(10000, seed=0)
@@ -40,7 +40,7 @@ rate down.
 the parity-check `H`, the priors, and the observable matrix for BP decoders.
 
 ```python
-from aaronson.qec import repetition_code
+from qliff.qec import repetition_code
 
 rep = repetition_code(distance=3, rounds=3, p=0.05)
 dem = rep.dem()
@@ -58,7 +58,7 @@ labels. `logical_fidelity` returns $1 - \text{LER}$.
 
 ```python
 from pymatching import Matching
-from aaronson.qec import repetition_code, logical_fidelity
+from qliff.qec import repetition_code, logical_fidelity
 
 rep = repetition_code(distance=3, rounds=3, p=0.05)
 dem = rep.dem()
