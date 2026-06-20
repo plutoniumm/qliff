@@ -10,7 +10,7 @@ _PAIR = {
     "Z": (0, 1),
     "Y": (1, 1),
 }
-_CHAR = "IXZY"  # index by x | (z << 1)
+_CHAR = "IXZY"  # index x|(z<<1) = x + 2z: I=0, X=1, Z=2, Y=3
 _PHASE = {
     0: "+",
     1: "+i",
@@ -122,7 +122,7 @@ class PauliString:
     __slots__ = ("x", "z", "phase")
 
     def __init__(self, x: Bits, z: Bits, phase: int = 0):
-        self.x = [int(v) & 1 for v in x]
+        self.x = [int(v) & 1 for v in x]  # & 1: coerce to a 0/1 bit
         self.z = [int(v) & 1 for v in z]
 
         if len(self.x) != len(self.z):

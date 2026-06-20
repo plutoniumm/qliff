@@ -55,8 +55,25 @@ setup(
     extras_require={
         "dev": ["setuptools-rust", "twine", "black", "wheel"],
         "bench": ["stim", "pymatching"],
+        # the `qliff` web studio: FastAPI server + MWPM/BP-OSD decoders. Kept out
+        # of the core so `import qliff` stays numpy-only.
+        "studio": [
+            "fastapi",
+            "uvicorn[standard]",
+            "pymatching",
+            "ldpc",
+        ],
     },
     setup_requires=["setuptools-rust"],
     rust_extensions=rust_extensions,
+    # the built SPA (./do studio -> qliff/server/static) ships in the wheel.
+    include_package_data=True,
+    package_data={"qliff": ["server/static/*", "server/static/**/*"]},
+    entry_points={"console_scripts": ["qliff = qliff.server.cli:main"]},
+    # Tag wheels cp311-abi3 (PEP 384 stable ABI) regardless of the building
+    # Python, so one wheel per platform serves every Python >= 3.11. Matches the
+    # abi3-py311 pyo3 feature; without this bdist_wheel would tag version-specific
+    # wheels (e.g. cp314-cp314 when built under 3.14).
+    options={"bdist_wheel": {"py_limited_api": "cp311"}},
     zip_safe=False,
 )

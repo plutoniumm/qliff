@@ -5,18 +5,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-// splitmix64, the canonical constants. fast + seedable, fine for measurement
-// coins and noise sampling (not crypto).
+// splitmix64 (canonical constants): fast, seedable; fine for measurement coins
+// and noise sampling (not crypto).
 #[derive(Clone)]
 struct Rng {
     s: u64,
 }
+
 impl Rng {
     fn new(seed: u64) -> Self {
         Rng { s: seed }
     }
     #[inline]
     fn next_u64(&mut self) -> u64 {
+        // advance by the golden-ratio odd constant, then the xorshift-multiply
+        // finalizer (the >>30/>>27/>>31 fold high bits down to mix every bit).
         self.s = self.s.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.s;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -25,11 +28,11 @@ impl Rng {
     }
     #[inline]
     fn next_bool(&mut self) -> bool {
-        self.next_u64() >> 63 == 1
+        self.next_u64() >> 63 == 1 // high bit
     }
     #[inline]
     fn next_f64(&mut self) -> f64 {
-        // 53-bit mantissa in [0, 1)
+        // top 53 bits / 2^53 -> uniform in [0, 1)
         (self.next_u64() >> 11) as f64 / ((1u64 << 53) as f64)
     }
 }
@@ -69,7 +72,7 @@ fn frame_chunk(
     seed: u64,
     out: &mut [u8],
 ) {
-    let sw = (chunk_shots + 63) / 64;
+    let sw = (chunk_shots + 63) / 64; // ceil(chunk_shots/64): words/qubit, 1 bit per shot
     let mut fx = vec![0u64; n * sw];
     let mut fz = vec![0u64; n * sw];
     let mut noise = Rng::new(seed);
@@ -143,7 +146,10 @@ fn frame_chunk(
                 }
             }
             2 => {
-                // rare-error noise: see frame_sample's serial original for the math
+                // rare-error noise via geometric skips. with per-shot fault prob
+                // f = fault_weight/total, gaps between faulty shots are geometric,
+                // so skip = ln(1-U)/ln(1-f) jumps straight to the next faulty shot
+                // (cheap when faults are rare); then pick a branch ~ |weight|.
                 let table = &branches[x as usize];
                 let total: f64 = table.iter().map(|(w, _)| w.abs()).sum();
                 let fault_weight: f64 = table
@@ -182,7 +188,7 @@ fn frame_chunk(
                         }
                     }
 
-                    let (word, bit) = (s >> 6, 1u64 << (s & 63));
+                    let (word, bit) = (s >> 6, 1u64 << (s & 63)); // shot s -> word s/64, mask 2^(s mod 64)
                     for &(op, qa, _qb) in chosen {
                         let fq = (qa as usize) * sw + word;
                         match op {
@@ -204,10 +210,10 @@ fn frame_chunk(
 
     // transpose planes (num_meas x chunk_shots) -> shot-major bytes into `out`
     for s in 0..chunk_shots {
-        let (word, bit) = (s >> 6, s & 63);
+        let (word, bit) = (s >> 6, s & 63); // shot s -> (word s/64, bit s mod 64)
         let base = s * num_meas;
         for (m, plane) in meas_planes.iter().enumerate() {
-            out[base + m] = ((plane[word] >> bit) & 1) as u8;
+            out[base + m] = ((plane[word] >> bit) & 1) as u8; // pull shot s's bit
         }
     }
 }
@@ -363,24 +369,23 @@ fn word_g(xi: u64, zi: u64, xh: u64, zh: u64) -> i32 {
     plus.count_ones() as i32 - minus.count_ones() as i32
 }
 
-// NOTE: in the tableu we will start with |00> in all instances because that makes dealing with ZZ easy.
-
-// CNOT-Hadamard-Phase tableau (Aaronson-Gottesman)
-//   0..N    destabilizers
-//   N..2N   stabilizers
-//   2N      scratch (for measurement stuff)
+// CNOT-Hadamard-Phase tableau (Aaronson-Gottesman). 2n+1 rows:
+//   0..n    destabilizers
+//   n..2n   stabilizers
+//   2n      scratch (measurement)
+// init is always |0...0> (destab i = X_i, stab i = Z_i) -- keeps ZZ trivial.
 #[pyclass]
 #[derive(Clone)]
 pub struct RowTableau {
     nq: usize,
-    // ceil(n/64): u64 words packed per row
+    // words per row: ceil(n/64)
     w: usize,
-    // row r qubit j ->
-    // word (j>>6) [from j//64] and
-    //  bit (j&63) [from j% 64]
+    // bit-packed Pauli rows. qubit j of row r lives at word j>>6 (= j/64), bit
+    // j&63 (= j mod 64); single-bit mask 1<<(j&63) (= 2^(j mod 64)). this packing
+    // (>>6 word, &63 bit, 1<<… mask) recurs throughout the file.
     xs: Vec<u64>,
     zs: Vec<u64>,
-    // per-row phase: 0 => +, 1 => -
+    // per-row phase bit: 0 => +, 1 => -
     signs: Vec<u8>,
     // measurement outcomes, in call order
     record: Vec<bool>,
@@ -388,28 +393,20 @@ pub struct RowTableau {
 }
 
 /*
-Each row is actually
-- X[stuff]
-- Z[stuff]
-- r[stuff]
-
-but in fact gets packed to a single row as [x1...xn, z1...zn, r1...rn].
-An example for |00> but with Vec<u8> packing would be
+Each row is a Pauli held across the parallel xs / zs / signs arrays: an X-part,
+a Z-part, and a sign. For |00> (n=2), with each X/Z byte shown bit j = qubit j:
 
        x         z         r   Pauli
 row 0  00000001  00000000  +   X₀      ← destab
 row 1  00000010  00000000  +   X₁      ← destab
 row 2  00000000  00000001  +   Z₀      ← stab  ┐ stabilized by +Z₀, +Z₁
 row 3  00000000  00000010  +   Z₁      ← stab  ┘ ⇒ |00⟩
-row 4  00000000  00000000  +   I
-
-But the plus and minus here would be stored as bits.
+row 4  00000000  00000000  +   I            ← scratch
 */
 impl RowTableau {
+    // read bit j of row i: word i*w + j/64, shift bit j mod 64 down, mask to bool.
     #[inline]
-    // I will not apologise for doing unhinged things
     fn get_x(&self, i: usize, j: usize) -> bool {
-        // == 1 is to get a bool out
         (self.xs[i * self.w + (j >> 6)] >> (j & 63)) & 1 == 1
     }
 
@@ -601,16 +598,16 @@ impl RowTableau {
 
     // H: swap x<->z; sign ^= x & z
     fn h(&mut self, a: usize) {
-        let wa = a >> 6;
-        let sh = a & 63;
-        let m = 1u64 << sh;
+        let wa = a >> 6; // word a/64
+        let sh = a & 63; // bit a mod 64
+        let m = 1u64 << sh; // mask 2^(a mod 64)
         for i in 0..2 * self.nq {
             let b = i * self.w + wa;
-            let xb = (self.xs[b] >> sh) & 1;
+            let xb = (self.xs[b] >> sh) & 1; // bit a of row i
             let zb = (self.zs[b] >> sh) & 1;
             self.signs[i] ^= (xb & zb) as u8;
-            self.xs[b] = (self.xs[b] & !m) | (zb << sh);
-            self.zs[b] = (self.zs[b] & !m) | (xb << sh);
+            self.xs[b] = (self.xs[b] & !m) | (zb << sh); // clear bit a, set it to z
+            self.zs[b] = (self.zs[b] & !m) | (xb << sh); // clear bit a, set it to x
         }
     }
 
@@ -872,18 +869,18 @@ fn transpose64(a: &mut [u64; 64]) {
     // LSB-column (bit b of a[r] is column b): swap a[k]'s high half with a[k+j]'s
     // low half. Hacker's Delight is MSB-column; flipping the shifted operand gives
     // the LSB form -- verified against a naive transpose.
-    let mut j = 32usize;
-    let mut m = 0x0000_0000_FFFF_FFFFu64;
+    let mut j = 32usize; // block size, halving: 32, 16, 8, 4, 2, 1
+    let mut m = 0x0000_0000_FFFF_FFFFu64; // mask selecting the low half of each 2j block
     while j != 0 {
         let mut k = 0usize;
         while k < 64 {
-            let t = ((a[k] >> j) ^ a[k + j]) & m;
+            let t = ((a[k] >> j) ^ a[k + j]) & m; // bits that differ between the two j-blocks
             a[k] ^= t << j;
-            a[k + j] ^= t;
-            k = (k + j + 1) & !j;
+            a[k + j] ^= t; // swap those bits -> transposes the j x j block pair
+            k = (k + j + 1) & !j; // advance to the next block pair (skip the j we just did)
         }
-        j >>= 1;
-        m ^= m << j;
+        j >>= 1; // halve the block size
+        m ^= m << j; // rebuild the mask for the smaller blocks
     }
 }
 

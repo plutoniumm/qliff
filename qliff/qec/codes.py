@@ -128,6 +128,170 @@ def rotated_surface_code(distance: int, rounds: int, p: float) -> Circuit:
     return c
 
 
+def _unrotated_grid(distance: int) -> tuple[dict, list, list]:
+    """
+    Standard (non-rotated) planar surface-code layout on a (2d-1)x(2d-1) grid.
+    Data sit on (r+c) even sites (d^2+(d-1)^2 of them); X-checks on (r even,
+    c odd) sites, Z-checks on the rest of the odd sites. Returns
+    (data, x_checks, z_checks) with checks as (anc_index, touched_data).
+    """
+    side = 2 * distance - 1
+    data = {}
+    for r in range(side):
+        for col in range(side):
+            if (r + col) % 2 == 0:
+                data[(r, col)] = len(data)
+
+    x_checks = []
+    z_checks = []
+    index = len(data)
+    for r in range(side):
+        for col in range(side):
+            if (r + col) % 2 == 0:
+                continue
+            corners = [(r - 1, col), (r + 1, col), (r, col - 1), (r, col + 1)]
+            touch = sorted(data[p] for p in corners if p in data)
+            if r % 2 == 0 and col % 2 == 1:
+                x_checks.append((index, touch))
+            else:
+                z_checks.append((index, touch))
+            index += 1
+
+    return data, x_checks, z_checks
+
+
+def unrotated_surface_code(distance: int, rounds: int, p: float) -> Circuit:
+    """
+    Unrotated (standard) planar surface-code Z-memory: data on the (r+c)-even
+    sites of a (2d-1)^2 grid, star X-checks and plaquette Z-checks. Only Z
+    stabilizers declare round-to-round detectors (graphlike); final data M seeds
+    boundary Z detectors and the logical-Z observable along the top data row.
+    """
+    side = 2 * distance - 1
+    data, x_checks, z_checks = _unrotated_grid(distance)
+    order = z_checks + x_checks
+    width = len(order)
+    n_data = len(data)
+    c = Circuit()
+
+    for r in range(rounds):
+        for q in range(n_data):
+            c.append("DEPOLARIZE1", [q], p)
+
+        for k, (anc, touch) in enumerate(order):
+            is_x = k >= len(z_checks)
+            if is_x:
+                c.append("H", [anc])
+                for d in touch:
+                    c.append("CX", [anc, d])
+                c.append("H", [anc])
+            else:
+                for d in touch:
+                    c.append("CX", [d, anc])
+            c.append("MR", [anc])
+            if is_x:
+                continue
+            if r == 0:
+                c.detector(-1)
+            else:
+                c.detector(-1, -1 - width)
+
+    for q in range(n_data):
+        c.append("M", [q])
+    for k, (_anc, touch) in enumerate(z_checks):
+        recs = [-n_data + d for d in touch]
+        prev = -n_data - width + k
+        c.detector(*recs, prev)
+
+    logical_z = [-n_data + data[(0, col)] for col in range(side) if (0, col) in data]
+    c.observable(0, *logical_z)
+
+    return c
+
+
+def _toric_grid(distance: int) -> tuple[int, list, list, list]:
+    """
+    Toric-code layout on a d x d torus: data on edges (d^2 horizontal +
+    d^2 vertical), with periodic wraparound both directions. Returns
+    (n_data, x_checks, z_checks, logicals); checks are (touched_data) tuples and
+    logicals is [logZ1, logZ2] -- horizontal-edge and vertical-edge windings.
+    """
+    side = distance
+
+    def horiz(r: int, col: int) -> int:
+        return (r % side) * side + (col % side)
+
+    def vert(r: int, col: int) -> int:
+        return side * side + (r % side) * side + (col % side)
+
+    n_data = 2 * side * side
+    z_checks = []
+    for r in range(side):
+        for col in range(side):
+            face = [horiz(r, col), horiz(r + 1, col), vert(r, col), vert(r, col + 1)]
+            z_checks.append(sorted(face))
+
+    x_checks = []
+    for r in range(side):
+        for col in range(side):
+            star = [horiz(r, col), horiz(r, col - 1), vert(r, col), vert(r - 1, col)]
+            x_checks.append(sorted(star))
+
+    logical_z1 = [horiz(0, col) for col in range(side)]
+    logical_z2 = [vert(r, 0) for r in range(side)]
+
+    return n_data, x_checks, z_checks, [logical_z1, logical_z2]
+
+
+def toric_code(distance: int, rounds: int, p: float) -> Circuit:
+    """
+    Toric-code Z-memory with periodic boundaries both directions (wraparound):
+    data on the 2d^2 torus edges, d^2 star X-checks and d^2 plaquette Z-checks,
+    two logical qubits. Only Z stabilizers declare round-to-round detectors;
+    final data M seeds boundary Z detectors and the two logical-Z observables
+    (one per non-contractible loop).
+    """
+    n_data, x_checks, z_checks, logicals = _toric_grid(distance)
+    z_anc = list(range(n_data, n_data + len(z_checks)))
+    x_anc = list(range(n_data + len(z_checks), n_data + len(z_checks) + len(x_checks)))
+    width = len(z_checks) + len(x_checks)
+    c = Circuit()
+
+    for r in range(rounds):
+        for q in range(n_data):
+            c.append("DEPOLARIZE1", [q], p)
+
+        for k, touch in enumerate(z_checks):
+            anc = z_anc[k]
+            for d in touch:
+                c.append("CX", [d, anc])
+            c.append("MR", [anc])
+            if r == 0:
+                c.detector(-1)
+            else:
+                c.detector(-1, -1 - width)
+
+        for k, touch in enumerate(x_checks):
+            anc = x_anc[k]
+            c.append("H", [anc])
+            for d in touch:
+                c.append("CX", [anc, d])
+            c.append("H", [anc])
+            c.append("MR", [anc])
+
+    for q in range(n_data):
+        c.append("M", [q])
+    for k, touch in enumerate(z_checks):
+        recs = [-n_data + d for d in touch]
+        prev = -n_data - width + k
+        c.detector(*recs, prev)
+
+    for obs_index, loop in enumerate(logicals):
+        c.observable(obs_index, *[-n_data + d for d in loop])
+
+    return c
+
+
 def logical_fidelity(predictions: np.ndarray, observed: np.ndarray) -> float:
     """
     Logical fidelity = 1 - mean(prediction != observed) (complement of the
