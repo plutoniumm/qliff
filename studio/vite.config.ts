@@ -16,5 +16,18 @@ export default defineConfig({
     outDir: "../qliff/server/static",
     emptyOutDir: true,
   },
-  server: { port: 5174 },
+  // In dev, proxy /api (REST + the /api/run WebSocket) through to the qliff
+  // server so the SPA and the API share one origin -- same as production, where
+  // the Python server serves both. No CORS, no cross-origin port juggling.
+  // Override the backend with QLIFF_API (default: the cli.py default port).
+  server: {
+    port: 5174,
+    proxy: {
+      "/api": {
+        target: process.env.QLIFF_API ?? "http://127.0.0.1:8731",
+        changeOrigin: true,
+        ws: true,
+      },
+    },
+  },
 });

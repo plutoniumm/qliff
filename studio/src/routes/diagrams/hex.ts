@@ -38,6 +38,7 @@ export interface HexResize {
 export interface HexGrid {
   hexes: Hexagon[];
   edges: HexEdge[];
+  vertices: Point[]; // data-qubit sites: the deduplicated hexagon corners
   bounds: Bounds;
   view: ViewBox;
 }
@@ -150,12 +151,23 @@ export function Grid(
 
   for (const hex of hexes) all.push(...hex.points);
 
+  // Data qubits live on the hexagon corners; corners are shared between faces,
+  // so dedupe on a quantized key to get one site per physical vertex.
+  const vseen = new Map<string, Point>();
+
+  for (const p of all) {
+    const key = `${Math.round(p.x * 100)}:${Math.round(p.y * 100)}`;
+
+    if (!vseen.has(key)) vseen.set(key, p);
+  }
+
   const bounds = getBounds(all);
   const view = getBBox(bounds, resize(size).padding, true);
 
   return {
     hexes,
     edges: Array.from(edges.values()),
+    vertices: Array.from(vseen.values()),
     bounds,
     view,
   };

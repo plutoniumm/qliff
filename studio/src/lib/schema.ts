@@ -9,8 +9,19 @@ export type CodeFamily =
   | "rotated_surface"
   | "unrotated_surface"
   | "toric";
-export type DecoderName = "mwpm" | "bposd";
+export type DecoderName = "mwpm" | "bposd" | "mld" | "tn" | "coherent";
 export type Boundary = "open" | "periodic";
+// Surface-code stabiliser-pattern knobs (rotated + unrotated families), following
+// the EVEN-X / EVEN-Z analysis: `pattern` (plain CSS vs the Hadamard-conjugated
+// XZZX code), `start` (the X/Z colouring; "X" is the global-Hadamard dual), and
+// `edge` (which alternating boundary-edge set / logical orientation; rotated only).
+export type SurfacePattern = "css" | "xzzx";
+export type SurfaceStart = "Z" | "X";
+export type SurfaceEdge = "even" | "odd";
+
+// Per-channel argument shape: a single strength, a coherent angle, or a 3-vector
+// of Pauli probabilities (PAULI_CHANNEL_1).
+export type ChannelArg = "p" | "theta" | "vec3";
 
 // ---- builder geometry ----------------------------------------------------
 
@@ -48,16 +59,23 @@ export interface LatticeSpec {
 export interface Template {
   family: CodeFamily;
   distance: number; // >= 2
+  // Surface-family stabiliser pattern (defaults css/Z/even); `edge` is rotated-only.
+  pattern?: SurfacePattern;
+  start?: SurfaceStart;
+  edge?: SurfaceEdge;
 }
 
 // ---- noise + run request -------------------------------------------------
 
 // Noise op name (matches the Circuit op) at strength p, or swept over p_sweep.
-// Exactly one of p / p_sweep.
+// Exactly one of p / p_sweep. `theta` carries the coherent angle for RZ/RX;
+// `vec3` carries the (px,py,pz) probabilities for PAULI_CHANNEL_1.
 export interface NoiseModel {
   channel: string; // default "DEPOLARIZE1"
   p?: number | null;
   p_sweep?: number[] | null;
+  theta?: number | null;
+  vec3?: [number, number, number] | null;
 }
 
 // A LER run. Exactly one of template / spec is set.
@@ -98,11 +116,14 @@ export interface RunResponse {
   elapsed: number;
 }
 
-// One WebSocket frame during a streaming run.
+// One run event. The server's WebSocket sends point/done/error frames; the
+// client adds a synthetic "fallback" event (when it degrades to REST) and a
+// `transport` flag on errors that came from a dead socket rather than the server.
 export interface RunEvent {
-  type: "point" | "done" | "error";
+  type: "point" | "done" | "error" | "fallback";
   point?: LerPoint | null;
   message?: string | null;
+  transport?: boolean;
 }
 
 export interface TemplateInfo {
@@ -110,4 +131,27 @@ export interface TemplateInfo {
   label: string;
   min_distance: number;
   decoders: DecoderName[];
+  // Stabiliser-pattern options per axis; one entry on an axis => no selector for it.
+  patterns: SurfacePattern[];
+  starts: SurfaceStart[];
+  edges: SurfaceEdge[];
+}
+
+// GET /api/decoders entry. `pauli_only` decoders work off a detector-error model
+// and can only honestly decode Pauli noise.
+export interface DecoderInfo {
+  name: DecoderName;
+  label: string;
+  pauli_only: boolean;
+  note: string;
+}
+
+// GET /api/channels entry. `is_pauli` false marks coherent / amplitude-damping
+// channels that a DEM decoder can't honestly handle. `arg` selects the input UI.
+export interface ChannelInfo {
+  name: string;
+  label: string;
+  is_pauli: boolean;
+  arg: ChannelArg;
+  note: string;
 }

@@ -20,8 +20,17 @@ CodeFamily = Literal[
     "unrotated_surface",
     "toric",
 ]
-DecoderName = Literal["mwpm", "bposd"]
+DecoderName = Literal["mwpm", "bposd", "mld", "tn", "coherent"]
 Boundary = Literal["open", "periodic"]
+ChannelArg = Literal["p", "theta", "vec3"]
+# Surface-code stabiliser-pattern knobs (rotated + unrotated families), following the
+# EVEN-X / EVEN-Z analysis: `pattern` (plain CSS vs the Hadamard-conjugated XZZX
+# code), `start` (the X/Z colouring; "X" is the global-Hadamard dual, equivalent
+# under symmetric noise but not under amplitude damping), and `edge` (which
+# alternating boundary-edge set / logical orientation; rotated family only).
+SurfacePattern = Literal["css", "xzzx"]
+SurfaceStart = Literal["Z", "X"]
+SurfaceEdge = Literal["even", "odd"]
 
 
 class Tile(BaseModel):
@@ -71,11 +80,16 @@ class LatticeSpec(BaseModel):
 
 class Template(BaseModel):
     """
-    A canonical code family the engine can generate without explicit tiles.
+    A canonical code family the engine can generate without explicit tiles. The
+    surface families (rotated/unrotated) honour the stabiliser-pattern knobs
+    (pattern/start/edge; `edge` is rotated-only); repetition/toric ignore them.
     """
 
     family: CodeFamily
     distance: int = Field(ge=2)
+    pattern: SurfacePattern = "css"
+    start: SurfaceStart = "Z"
+    edge: SurfaceEdge = "even"
 
 
 class NoiseModel(BaseModel):
@@ -130,7 +144,8 @@ class LerPoint(BaseModel):
 
 class RunResponse(BaseModel):
     """
-    The full LER curve for a finished run.
+    The full LER curve for a finished run; `warnings` carries any decoder/channel
+    mismatch notes (e.g. a non-Pauli channel decoded by a DEM decoder).
     """
 
     decoder: str
@@ -138,6 +153,7 @@ class RunResponse(BaseModel):
     num_qubits: int = 0
     num_detectors: int = 0
     elapsed: float = 0.0
+    warnings: list[str] = Field(default_factory=list)
 
 
 class RunEvent(BaseModel):
@@ -152,10 +168,42 @@ class RunEvent(BaseModel):
 
 class TemplateInfo(BaseModel):
     """
-    An entry in GET /api/templates: a family the UI can offer.
+    An entry in GET /api/templates: a family the UI can offer. patterns/starts/edges
+    list the stabiliser-pattern options the family supports along each axis (one
+    entry on an axis => no selector to offer for it).
     """
 
     family: CodeFamily
     label: str
     min_distance: int
     decoders: list[DecoderName]
+    patterns: list[SurfacePattern] = Field(default_factory=lambda: ["css"])
+    starts: list[SurfaceStart] = Field(default_factory=lambda: ["Z"])
+    edges: list[SurfaceEdge] = Field(default_factory=lambda: ["even"])
+
+
+class DecoderInfo(BaseModel):
+    """
+    An entry in GET /api/decoders: a decoder the UI can offer. `pauli_only`
+    decoders honestly decode only Pauli channels; coherent/non-Pauli noise needs
+    `pauli_only` false.
+    """
+
+    name: DecoderName
+    label: str
+    pauli_only: bool
+    note: str
+
+
+class ChannelInfo(BaseModel):
+    """
+    An entry in GET /api/channels: a noise channel the UI can offer. `arg` names
+    the strength shape ("p" scalar, "theta" rotation angle, "vec3" Pauli rates);
+    `is_pauli` false channels (RZ/RX/AMPLITUDE_DAMP) need the coherent decoder.
+    """
+
+    name: str
+    label: str
+    is_pauli: bool
+    arg: ChannelArg
+    note: str

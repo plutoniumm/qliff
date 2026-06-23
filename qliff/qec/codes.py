@@ -4,13 +4,132 @@ import numpy as np
 
 from ..circuit import Circuit
 
+# Surface-code stabiliser-pattern knobs (rotated + unrotated families), following the
+# EVEN-X / EVEN-Z analysis of Dutta, Seksaria and Rudra. Three orthogonal axes:
+#  - pattern: "css" (plain CSS) or "xzzx" (the Hadamard-conjugated XZZX code).
+#  - start: the X/Z colouring; "Z" => type-A boxes are Z, "X" => its global-Hadamard
+#    dual (the paper's EVEN-X, equivalent under symmetric noise but not under AD).
+#  - edge: which alternating set of boundary edges is promoted to stabilisers; also
+#    flips the logical orientation (column vs row). Rotated family only.
+# Every (pattern, start, edge) is a Clifford conjugation of the css/Z/even base, so
+# all inherit its distance and determinism and differ only under asymmetric noise.
+SURFACE_PATTERNS = ("css", "xzzx")
+SURFACE_STARTS = ("Z", "X")
+SURFACE_EDGES = ("even", "odd")
 
-def repetition_code(distance: int, rounds: int, p: float) -> Circuit:
+
+def _hframe(start: str, pattern: str, sublattice: bool) -> bool:
+    """
+    Whether a data qubit sits in the Hadamard (X) frame: `start="X"` flips every
+    qubit (global-Hadamard dual), and the XZZX pattern additionally flips the
+    `sublattice` qubits. The two compose by XOR.
+    """
+    return (start == "X") != (pattern == "xzzx" and sublattice)
+
+
+def _check_surface_knobs(pattern: str, start: str, edge: str) -> None:
+    """
+    Validate the three stabiliser-pattern knobs against the supported sets.
+    """
+    if pattern not in SURFACE_PATTERNS:
+        raise ValueError(f"unknown pattern {pattern!r}; expected {SURFACE_PATTERNS}")
+    if start not in SURFACE_STARTS:
+        raise ValueError(f"unknown start {start!r}; expected {SURFACE_STARTS}")
+    if edge not in SURFACE_EDGES:
+        raise ValueError(f"unknown edge {edge!r}; expected {SURFACE_EDGES}")
+
+
+def _emit_memory(
+    n_data: int,
+    stabilizers: list[tuple[bool, list[tuple[int, str]]]],
+    observables: list[list[tuple[int, str]]],
+    q_basis: dict[int, str],
+    rounds: int,
+    channel: str,
+    p: float,
+) -> Circuit:
+    """
+    Generalised syndrome-extraction memory for an arbitrary (possibly non-CSS)
+    stabiliser code. `stabilizers` is a list of (primary, corners) where corners is
+    [(data_qubit, "X"|"Z")]; `primary` checks declare round-to-round detectors and
+    are reconstructed at readout. `q_basis` gives each data qubit's frame ("X" =>
+    init |+> and read in the X basis, "Z" => |0> / Z basis); every primary check and
+    observable must touch a qubit with the matching Pauli (the caller guarantees
+    this). Each check is read with a |+> ancilla and a controlled-X / controlled-Z
+    per corner, so mixed XZZX faces extract correctly. Per-round data noise is the
+    requested `channel` at strength p; the final transversal data measurement (in
+    each qubit's frame) seeds the boundary detectors and the observables.
+    """
+    c = Circuit()
+    width = len(stabilizers)
+    anc = [n_data + i for i in range(width)]
+    x_data = [q for q in range(n_data) if q_basis.get(q, "Z") == "X"]
+
+    # init: |+> on the X-frame data qubits (the rest stay |0>).
+    for q in x_data:
+        c.append("H", [q])
+
+    for r in range(rounds):
+        for q in range(n_data):
+            c.append(channel, [q], p)
+
+        for i, (primary, corners) in enumerate(stabilizers):
+            a = anc[i]
+            c.append("H", [a])
+            for q, pauli in corners:
+                if pauli == "X":
+                    c.append("CX", [a, q])
+                else:
+                    c.append("CZ", [a, q])
+            c.append("H", [a])
+            c.append("MR", [a])
+            if not primary:
+                continue
+            if r == 0:
+                c.detector(-1)
+            else:
+                c.detector(-1, -1 - width)
+
+    # transversal readout in each qubit's own frame, then boundary detectors.
+    for q in x_data:
+        c.append("H", [q])
+    for q in range(n_data):
+        c.append("M", [q])
+
+    for i, (primary, corners) in enumerate(stabilizers):
+        if not primary:
+            continue
+        recs = [-n_data + q for q, _pauli in corners]
+        prev = -n_data - width + i
+        c.detector(*recs, prev)
+
+    for index, corners in enumerate(observables):
+        c.observable(index, *[-n_data + q for q, _pauli in corners])
+
+    return c
+
+
+def _flip_on(pauli: str, condition: bool) -> str:
+    """
+    Swap a single-qubit Pauli X<->Z when `condition` (a Hadamard sits on the qubit).
+    """
+    if not condition:
+        return pauli
+
+    return "X" if pauli == "Z" else "Z"
+
+
+def repetition_code(
+    distance: int,
+    rounds: int,
+    p: float,
+    channel: str = "DEPOLARIZE1",
+) -> Circuit:
     """
     Bit-flip repetition-code memory: distance data + distance-1 ancillas,
-    per-round X error p per data qubit. Ancillas read adjacent Z parities;
-    detectors compare each ancilla round-to-round; final data M seeds boundary
-    detectors and the logical-Z observable.
+    per-round `channel` noise (strength p / theta) per data qubit. Ancillas read
+    adjacent Z parities; detectors compare each ancilla round-to-round; final
+    data M seeds boundary detectors and the logical-Z observable.
     """
     c = Circuit()
     data = list(range(distance))
@@ -19,7 +138,7 @@ def repetition_code(distance: int, rounds: int, p: float) -> Circuit:
 
     for r in range(rounds):
         for q in data:
-            c.append("X_ERROR", [q], p)
+            c.append(channel, [q], p)
 
         for i in range(checks):
             c.append("CX", [data[i], anc[i]])
@@ -78,14 +197,88 @@ def _qubit_grid(distance: int) -> tuple[dict[tuple[int, int], int], list]:
     return data, plaq
 
 
-def rotated_surface_code(distance: int, rounds: int, p: float) -> Circuit:
+def _rotated_layout(
+    distance: int, pattern: str, start: str, edge: str
+) -> tuple[int, list, list, dict]:
     """
-    Rotated planar surface-code Z-memory: d x d data grid, weight-4/2 X/Z
-    plaquettes, logical |0>, DEPOLARIZE1 p per round. Only Z stabilizers declare
-    round-to-round detectors (deterministic in a Z-basis memory), keeping the
-    graph graphlike. Final data M seeds boundary Z detectors and the logical-Z
-    observable along a column.
+    Layout (n_data, stabilizers, observables, q_basis) for a non-default rotated
+    surface-code variant. The plaquette checkerboard and the boundary set are
+    rebuilt for the chosen `edge` (the alternate boundary keeps the column logical
+    for "even", the row logical for "odd"); `pattern`/`start` then put each data
+    qubit in its Hadamard frame (_hframe), recolouring the per-corner Paulis. The
+    former Z-checks stay primary, so every combination is a Clifford conjugation of
+    the css/Z base and inherits its distance / determinism. Emitted via _emit_memory.
     """
+    data = {
+        (r, col): r * distance + col for r in range(distance) for col in range(distance)
+    }
+    n_data = distance * distance
+    in_h = {
+        data[(r, col)]: _hframe(start, pattern, (r + col) % 2 == 0) for (r, col) in data
+    }
+
+    plaq = []
+    for r in range(-1, distance):
+        for col in range(-1, distance):
+            kind = "Z" if (r + col) % 2 == 0 else "X"
+            corners = [(r, col), (r, col + 1), (r + 1, col), (r + 1, col + 1)]
+            touch = sorted(data[d] for d in corners if d in data)
+
+            if len(touch) == 4:
+                plaq.append((kind, touch))
+                continue
+            if len(touch) != 2:
+                continue
+
+            on_row = r < 0 or r >= distance - 1
+            keep_even = (on_row and (r + col) % 2 == 0) or (
+                not on_row and (r + col) % 2 == 1
+            )
+            if keep_even == (edge == "even"):
+                plaq.append((kind, touch))
+
+    stabilizers = [
+        (kind == "Z", [(q, _flip_on(kind, in_h[q])) for q in touch])
+        for kind, touch in plaq
+    ]
+
+    if edge == "even":
+        line = [data[(r, 0)] for r in range(distance)]
+    else:
+        line = [data[(0, col)] for col in range(distance)]
+    logical = [(q, _flip_on("Z", in_h[q])) for q in line]
+    q_basis = {q: ("X" if in_h[q] else "Z") for q in range(n_data)}
+
+    return n_data, stabilizers, [logical], q_basis
+
+
+def rotated_surface_code(
+    distance: int,
+    rounds: int,
+    p: float,
+    channel: str = "DEPOLARIZE1",
+    pattern: str = "css",
+    start: str = "Z",
+    edge: str = "even",
+) -> Circuit:
+    """
+    Rotated planar surface-code memory: d x d data grid, weight-4/2 plaquettes,
+    `channel` noise (strength p / theta) per round. (pattern, start, edge) select the
+    stabiliser pattern (see SURFACE_PATTERNS/STARTS/EDGES); the css/Z/even default is
+    the Z-memory below -- only Z stabilizers declare round-to-round detectors
+    (graphlike), final data M seeds boundary Z detectors and the logical-Z observable
+    along a column. Other combinations route through _rotated_layout + _emit_memory.
+    """
+    _check_surface_knobs(pattern, start, edge)
+    if (pattern, start, edge) != ("css", "Z", "even"):
+        n_data, stabilizers, observables, q_basis = _rotated_layout(
+            distance, pattern, start, edge
+        )
+
+        return _emit_memory(
+            n_data, stabilizers, observables, q_basis, rounds, channel, p
+        )
+
     data, plaq = _qubit_grid(distance)
     z_checks = [pq for pq in plaq if pq[0] == "Z"]
     x_checks = [pq for pq in plaq if pq[0] == "X"]
@@ -95,7 +288,7 @@ def rotated_surface_code(distance: int, rounds: int, p: float) -> Circuit:
 
     for r in range(rounds):
         for q in range(distance * distance):
-            c.append("DEPOLARIZE1", [q], p)
+            c.append(channel, [q], p)
 
         for kind, anc, touch in order:
             if kind == "X":
@@ -160,13 +353,63 @@ def _unrotated_grid(distance: int) -> tuple[dict, list, list]:
     return data, x_checks, z_checks
 
 
-def unrotated_surface_code(distance: int, rounds: int, p: float) -> Circuit:
+def _unrotated_layout(
+    distance: int, pattern: str, start: str
+) -> tuple[int, list, list, dict]:
     """
-    Unrotated (standard) planar surface-code Z-memory: data on the (r+c)-even
-    sites of a (2d-1)^2 grid, star X-checks and plaquette Z-checks. Only Z
-    stabilizers declare round-to-round detectors (graphlike); final data M seeds
-    boundary Z detectors and the logical-Z observable along the top data row.
+    Layout (n_data, stabilizers, observables, q_basis) for a non-default unrotated
+    surface-code variant. The standard layout promotes every star/plaquette check
+    (there is no alternate boundary set to choose, so `edge` does not apply here);
+    `pattern`/`start` put each data qubit in its Hadamard frame (start="X" flips all,
+    xzzx additionally flips the even-row sublattice), recolouring the per-corner
+    Paulis. The former Z-checks stay primary, so each is a Clifford conjugation of
+    the css/Z base. Emitted via _emit_memory.
     """
+    side = 2 * distance - 1
+    data, x_checks, z_checks = _unrotated_grid(distance)
+    n_data = len(data)
+    in_h = {idx: _hframe(start, pattern, r % 2 == 0) for (r, _c), idx in data.items()}
+
+    stabilizers = []
+    for _anc, touch in z_checks:
+        stabilizers.append((True, [(q, _flip_on("Z", in_h[q])) for q in touch]))
+    for _anc, touch in x_checks:
+        stabilizers.append((False, [(q, _flip_on("X", in_h[q])) for q in touch]))
+
+    row = [data[(0, col)] for col in range(side) if (0, col) in data]
+    logical = [(q, _flip_on("Z", in_h[q])) for q in row]
+    q_basis = {q: ("X" if in_h[q] else "Z") for q in range(n_data)}
+
+    return n_data, stabilizers, [logical], q_basis
+
+
+def unrotated_surface_code(
+    distance: int,
+    rounds: int,
+    p: float,
+    channel: str = "DEPOLARIZE1",
+    pattern: str = "css",
+    start: str = "Z",
+    edge: str = "even",
+) -> Circuit:
+    """
+    Unrotated (standard) planar surface-code memory: data on the (r+c)-even sites
+    of a (2d-1)^2 grid, star X-checks and plaquette Z-checks, `channel` noise
+    (strength p / theta) per round. (pattern, start) select the stabiliser pattern;
+    `edge` is accepted for a uniform surface API but has no effect here (the standard
+    layout has no alternate boundary set). The css/Z default is the Z-memory below;
+    other combinations route through _unrotated_layout + _emit_memory.
+    """
+    _check_surface_knobs(pattern, start, edge)
+    if (pattern, start) != ("css", "Z"):
+        n_data, stabilizers, observables, q_basis = _unrotated_layout(
+            distance, pattern, start
+        )
+
+        return _emit_memory(
+            n_data, stabilizers, observables, q_basis, rounds, channel, p
+        )
+
     side = 2 * distance - 1
     data, x_checks, z_checks = _unrotated_grid(distance)
     order = z_checks + x_checks
@@ -176,7 +419,7 @@ def unrotated_surface_code(distance: int, rounds: int, p: float) -> Circuit:
 
     for r in range(rounds):
         for q in range(n_data):
-            c.append("DEPOLARIZE1", [q], p)
+            c.append(channel, [q], p)
 
         for k, (anc, touch) in enumerate(order):
             is_x = k >= len(z_checks)
@@ -243,13 +486,18 @@ def _toric_grid(distance: int) -> tuple[int, list, list, list]:
     return n_data, x_checks, z_checks, [logical_z1, logical_z2]
 
 
-def toric_code(distance: int, rounds: int, p: float) -> Circuit:
+def toric_code(
+    distance: int,
+    rounds: int,
+    p: float,
+    channel: str = "DEPOLARIZE1",
+) -> Circuit:
     """
     Toric-code Z-memory with periodic boundaries both directions (wraparound):
     data on the 2d^2 torus edges, d^2 star X-checks and d^2 plaquette Z-checks,
-    two logical qubits. Only Z stabilizers declare round-to-round detectors;
-    final data M seeds boundary Z detectors and the two logical-Z observables
-    (one per non-contractible loop).
+    two logical qubits, `channel` noise (strength p / theta) per round. Only Z
+    stabilizers declare round-to-round detectors; final data M seeds boundary Z
+    detectors and the two logical-Z observables (one per non-contractible loop).
     """
     n_data, x_checks, z_checks, logicals = _toric_grid(distance)
     z_anc = list(range(n_data, n_data + len(z_checks)))
@@ -259,7 +507,7 @@ def toric_code(distance: int, rounds: int, p: float) -> Circuit:
 
     for r in range(rounds):
         for q in range(n_data):
-            c.append("DEPOLARIZE1", [q], p)
+            c.append(channel, [q], p)
 
         for k, touch in enumerate(z_checks):
             anc = z_anc[k]

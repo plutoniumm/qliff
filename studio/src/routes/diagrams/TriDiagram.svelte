@@ -1,5 +1,6 @@
 <script lang="ts">
-  // Triangular lattice diagram (with Kagome / medial variant) + controls.
+  // Triangular lattice diagram (with Kagome / medial variant) + controls. Shares
+  // the .diagram-* control chrome + mark styles with the square/hex diagrams.
   import { buildTri } from "./tri";
   import type { TriColorMap } from "./tri";
   import LatticeView from "./LatticeView.svelte";
@@ -7,24 +8,26 @@
   let cols = $state(5);
   let rows = $state(4);
   let size = $state(60);
+  let showFaces = $state(true);
   let showVertices = $state(true);
   let showEdges = $state(true);
-  let showFaces = $state(true);
   let showLabels = $state(false);
   let kagome = $state(false);
 
+  // shared phase-wheel palette (cyan / violet / magenta) -- matches the hex
+  // color code and the square X/Z subset.
   let colors = $state<TriColorMap>({
-    A: "#5aa0ff",
-    B: "#ff6b6b",
-    C: "#4cc9f0",
+    A: "#4cc9f0",
+    B: "#8b6cff",
+    C: "#ff5d8f",
   });
 
   let lattice = $derived(buildTri(rows, cols, size, colors, kagome));
   let name = $derived(`${kagome ? "kagome" : "triangular"}_${cols}x${rows}`);
 </script>
 
-<div class="layout">
-  <aside class="sidebar glass">
+<div class="diagram-layout">
+  <aside class="diagram-sidebar glass">
     <header class="head">
       <h3 class="gradient-text">{kagome ? "Kagome lattice" : "Triangular lattice"}</h3>
       <p class="sub">{kagome ? "Medial (line) graph" : "3-colorable faces"}</p>
@@ -33,7 +36,7 @@
     <label>Rows<input type="number" min="1" max="20" bind:value={rows} /></label>
     <label>Size<input type="number" min="10" max="120" step="5" bind:value={size} /></label>
     <label class="chk"><input type="checkbox" bind:checked={showFaces} />Faces</label>
-    <label class="chk"><input type="checkbox" bind:checked={showVertices} />Vertices (data sites)</label>
+    <label class="chk"><input type="checkbox" bind:checked={showVertices} />Data qubits</label>
     <label class="chk"><input type="checkbox" bind:checked={showEdges} />Edges</label>
     <label class="chk"><input type="checkbox" bind:checked={showLabels} />Labels</label>
     <label class="chk"><input type="checkbox" bind:checked={kagome} />Kagome (medial)</label>
@@ -49,10 +52,10 @@
     {#if showFaces}
       {#each lattice.faces as f, i (i)}
         <polygon
-          class="face"
+          class="diagram-face"
           points={f.pointsString}
           fill={f.color}
-          fill-opacity="0.3"
+          fill-opacity="0.28"
           stroke={f.color}
           stroke-width="1"
         />
@@ -84,119 +87,8 @@
     {/if}
     {#if showVertices}
       {#each lattice.vertices as v (v.id)}
-        <circle class="vertex" cx={v.x} cy={v.y} r={size * 0.08} fill="var(--fg)" />
+        <circle class="diagram-qubit" cx={v.x} cy={v.y} r={size * 0.09} fill="var(--fg)" />
       {/each}
     {/if}
   </LatticeView>
 </div>
-
-<style>
-  .layout {
-    display: flex;
-    gap: 18px;
-    align-items: stretch;
-    height: 100%;
-  }
-
-  .sidebar {
-    width: 232px;
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding: 18px;
-    overflow-y: auto;
-  }
-
-  .head {
-    margin-bottom: 2px;
-  }
-
-  .sidebar h3 {
-    margin: 0;
-    font-size: 17px;
-    font-weight: 700;
-    letter-spacing: 0.01em;
-  }
-
-  .sub {
-    margin: 3px 0 0;
-    font-size: 11.5px;
-    color: var(--faint);
-    letter-spacing: 0.02em;
-  }
-
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-  }
-
-  label.chk {
-    flex-direction: row;
-    align-items: center;
-    gap: 9px;
-    text-transform: none;
-    letter-spacing: 0.01em;
-    font-size: 13px;
-    font-weight: 400;
-    color: var(--fg);
-  }
-
-  .colors {
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: 10px 12px 12px;
-    margin: 2px 0 0;
-    background: color-mix(in srgb, var(--bg-2) 45%, transparent);
-  }
-
-  .colors legend {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-    padding: 0 6px;
-  }
-
-  label.color {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    text-transform: none;
-    letter-spacing: 0.01em;
-    font-size: 13px;
-    font-weight: 400;
-    color: var(--fg);
-  }
-
-  input[type="color"] {
-    width: 40px;
-    height: 24px;
-    padding: 0;
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    background: transparent;
-  }
-
-  .face {
-    transition:
-      fill-opacity var(--dur-fast) var(--ease-out),
-      filter var(--dur-fast) var(--ease-out);
-  }
-
-  .face:hover {
-    fill-opacity: 0.5;
-    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 55%, transparent));
-  }
-
-  .vertex {
-    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--fg) 55%, transparent));
-  }
-</style>

@@ -1,73 +1,150 @@
 <script lang="ts">
-  // Square surface-code lattice diagram + its controls.
-  import { buildRect, defaultParity } from "./rect";
+  // Square surface-code lattice diagram + its controls. Shares the control-panel
+  // chrome (.diagram-*) and the mark styles with the triangular/hex diagrams so
+  // all three stay consistent -- see app.css.
+  import { buildRect } from "./rect";
+  import type {
+    DiagramPattern,
+    DiagramStart,
+    DiagramEdge,
+    FaceType,
+  } from "./rect";
   import LatticeView from "./LatticeView.svelte";
 
   let cols = $state(5);
   let rows = $state(5);
   let cellSize = $state(60);
+  let showFaces = $state(true);
   let showQubits = $state(true);
   let showEdges = $state(true);
   let showLabels = $state(false);
   let rotated = $state(false);
+  // Stabiliser-pattern knobs, mirroring the runnable surface variants: the CSS vs
+  // XZZX type, the EVEN-Z / EVEN-X colouring, and the boundary edge set.
+  let pattern = $state<DiagramPattern>("css");
+  let start = $state<DiagramStart>("Z");
+  let edge = $state<DiagramEdge>("even");
+
+  const PATTERNS: { value: DiagramPattern; label: string }[] = [
+    { value: "css", label: "CSS" },
+    { value: "xzzx", label: "XZZX" },
+  ];
+  const STARTS: { value: DiagramStart; label: string }[] = [
+    { value: "Z", label: "EVEN-Z (Z-dominated)" },
+    { value: "X", label: "EVEN-X (X-dominated)" },
+  ];
+  const EDGES: { value: DiagramEdge; label: string }[] = [
+    { value: "even", label: "Even boundary" },
+    { value: "odd", label: "Odd boundary" },
+  ];
+
+  // X/Z stabilizer colours, a subset of the color-code A/B/C palette so the
+  // three diagrams share a hue language (Z = cyan, X = magenta, XZZX = amber).
+  let colors = $state({
+    Z: "#4cc9f0",
+    X: "#ff5d8f",
+    XZZX: "#ffb703",
+  });
+
+  function colorOf(type: FaceType | undefined): string {
+    if (type === "X") return colors.X;
+    if (type === "XZZX") return colors.XZZX;
+
+    return colors.Z;
+  }
 
   let lattice = $derived(
-    buildRect(cols, rows, cellSize, showEdges, rotated, defaultParity),
+    buildRect(cols, rows, cellSize, showEdges, rotated, pattern, start, edge),
   );
   let groupTransform = $derived(
     rotated
       ? `rotate(45 ${(cols * cellSize) / 2} ${(rows * cellSize) / 2})`
       : "",
   );
-  let name = $derived(`surface_code_${cols}x${rows}`);
+  let name = $derived(`surface_code_${pattern}_${start}_${edge}_${cols}x${rows}`);
 </script>
 
-<div class="layout">
-  <aside class="sidebar glass">
+<div class="diagram-layout">
+  <aside class="diagram-sidebar glass">
     <header class="head">
       <h3 class="gradient-text">Square surface code</h3>
       <p class="sub">CSS planar code &middot; X/Z plaquettes</p>
     </header>
+    <label
+      >Stabiliser type
+      <select bind:value={pattern}>
+        {#each PATTERNS as v (v.value)}
+          <option value={v.value}>{v.label}</option>
+        {/each}
+      </select>
+    </label>
+    <label
+      >Colouring
+      <select bind:value={start}>
+        {#each STARTS as v (v.value)}
+          <option value={v.value}>{v.label}</option>
+        {/each}
+      </select>
+    </label>
+    {#if pattern === "css"}
+      <label
+        >Boundary
+        <select bind:value={edge}>
+          {#each EDGES as v (v.value)}
+            <option value={v.value}>{v.label}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
     <label>Columns (n)<input type="number" min="1" max="20" bind:value={cols} /></label>
     <label>Rows (m)<input type="number" min="1" max="20" bind:value={rows} /></label>
     <label>Cell size<input type="number" min="10" max="120" step="5" bind:value={cellSize} /></label>
+    <label class="chk"><input type="checkbox" bind:checked={showFaces} />Faces</label>
     <label class="chk"><input type="checkbox" bind:checked={showQubits} />Data qubits</label>
-    <label class="chk"><input type="checkbox" bind:checked={showEdges} />Boundary edges</label>
+    <label class="chk"><input type="checkbox" bind:checked={showEdges} />Edges</label>
     <label class="chk"><input type="checkbox" bind:checked={showLabels} />Labels</label>
     <label class="chk"><input type="checkbox" bind:checked={rotated} />Rotated 45&deg;</label>
-    <p class="legend">
-      <span class="chip z"><span class="swatch z"></span>Z stabilizer</span>
-      <span class="chip x"><span class="swatch x"></span>X stabilizer</span>
-    </p>
+    <fieldset class="colors">
+      <legend>Stabilizer colors</legend>
+      <label class="color">Z<input type="color" bind:value={colors.Z} /></label>
+      <label class="color">X<input type="color" bind:value={colors.X} /></label>
+      {#if pattern === "xzzx"}
+        <label class="color">XZZX<input type="color" bind:value={colors.XZZX} /></label>
+      {/if}
+    </fieldset>
   </aside>
 
   <LatticeView viewBox={lattice.view.viewBox} {name}>
     <g transform={groupTransform}>
       <!-- boundary half-circle markers -->
-      {#each lattice.edges as e (e.path)}
-        <path
-          class="edge"
-          d={e.path}
-          fill={e.type === "X" ? "var(--x)" : "var(--z)"}
-          fill-opacity="0.35"
-          stroke={e.type === "X" ? "var(--x)" : "var(--z)"}
-          stroke-width="1.5"
-        />
-      {/each}
+      {#if showEdges}
+        {#each lattice.edges as e (e.path)}
+          <path
+            class="edge"
+            d={e.path}
+            fill={colorOf(e.type)}
+            fill-opacity="0.35"
+            stroke={colorOf(e.type)}
+            stroke-width="1.5"
+          />
+        {/each}
+      {/if}
       <!-- plaquettes -->
-      {#each lattice.stabilizers as s (s.id)}
-        <rect
-          class="plaq"
-          x={s.x}
-          y={s.y}
-          width={cellSize}
-          height={cellSize}
-          fill={s.type === "X" ? "var(--x)" : "var(--z)"}
-          fill-opacity="0.18"
-          stroke={s.type === "X" ? "var(--x)" : "var(--z)"}
-          stroke-width="1.5"
-        />
-      {/each}
+      {#if showFaces}
+        {#each lattice.stabilizers as s (s.id)}
+          <rect
+            class="diagram-face"
+            x={s.x}
+            y={s.y}
+            width={cellSize}
+            height={cellSize}
+            fill={colorOf(s.type)}
+            fill-opacity="0.28"
+            stroke={colorOf(s.type)}
+            stroke-width="1.5"
+          />
+        {/each}
+      {/if}
       {#if showLabels}
         {#each lattice.stabilizers as s (`l-${s.id}`)}
           <text
@@ -83,7 +160,7 @@
       <!-- data qubits -->
       {#if showQubits}
         {#each lattice.qubits as q (q.id)}
-          <circle class="qubit" cx={q.x} cy={q.y} r={cellSize * 0.1} fill="var(--fg)" />
+          <circle class="diagram-qubit" cx={q.x} cy={q.y} r={cellSize * 0.09} fill="var(--fg)" />
         {/each}
       {/if}
     </g>
@@ -91,119 +168,11 @@
 </div>
 
 <style>
-  .layout {
-    display: flex;
-    gap: 18px;
-    align-items: stretch;
-    height: 100%;
-  }
-
-  .sidebar {
-    width: 232px;
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding: 18px;
-    overflow-y: auto;
-  }
-
-  .head {
-    margin-bottom: 2px;
-  }
-
-  .sidebar h3 {
-    margin: 0;
-    font-size: 17px;
-    font-weight: 700;
-    letter-spacing: 0.01em;
-  }
-
-  .sub {
-    margin: 3px 0 0;
-    font-size: 11.5px;
-    color: var(--faint);
-    letter-spacing: 0.02em;
-  }
-
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-  }
-
-  label.chk {
-    flex-direction: row;
-    align-items: center;
-    gap: 9px;
-    text-transform: none;
-    letter-spacing: 0.01em;
-    font-size: 13px;
-    font-weight: 400;
-    color: var(--fg);
-  }
-
-  .legend {
-    margin: 6px 0 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 12px;
-    color: var(--fg);
-    padding: 4px 10px 4px 8px;
-    border-radius: 99px;
-    background: color-mix(in srgb, var(--bg-2) 60%, transparent);
-    border: 1px solid var(--line);
-  }
-
-  .swatch {
-    width: 11px;
-    height: 11px;
-    border-radius: 4px;
-    display: inline-block;
-  }
-
-  .swatch.x {
-    background: var(--x);
-    box-shadow: 0 0 10px -1px color-mix(in srgb, var(--x) 75%, transparent);
-  }
-
-  .swatch.z {
-    background: var(--z);
-    box-shadow: 0 0 10px -1px color-mix(in srgb, var(--z) 75%, transparent);
-  }
-
-  .plaq {
-    transition:
-      fill-opacity var(--dur-fast) var(--ease-out),
-      filter var(--dur-fast) var(--ease-out);
-  }
-
-  .plaq:hover {
-    fill-opacity: 0.4;
-    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 60%, transparent));
-  }
-
   .edge {
     transition: fill-opacity var(--dur-fast) var(--ease-out);
   }
 
   .edge:hover {
     fill-opacity: 0.6;
-  }
-
-  .qubit {
-    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--fg) 55%, transparent));
   }
 </style>

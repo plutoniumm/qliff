@@ -1,89 +1,157 @@
 <script lang="ts">
-  // Left control panel. Chooses the source (template vs. the drawn freeform
-  // lattice), the noise channel + strength (single p or a swept range), rounds,
-  // shots, and the decoder. Surfaces a Compile readout and fires Run. It builds
-  // the RunRequest and hands it back to Builder, which owns the API plumbing.
+  // Left control panel. ONE "Code" dropdown selects a template family or
+  // "Freeform (draw)" (which reveals the canvas); the noise channel is rendered
+  // from /api/channels with the right input per arg (single p, theta, or a
+  // vec3), and the decoder from /api/decoders. There is no Compile button: an
+  // always-on Surface stats panel is fed by Builder's debounced auto-compile.
+  // Non-Pauli channels steer the decoder to "coherent" and warn that DEM
+  // decoders can't honestly handle them. Builds the RunRequest for Builder.
   import type {
     TemplateInfo,
+    DecoderInfo,
+    ChannelInfo,
     CodeFamily,
     DecoderName,
+    SurfacePattern,
+    SurfaceStart,
+    SurfaceEdge,
     RunRequest,
+    NoiseModel,
     CompileResponse,
     LatticeSpec,
   } from "$lib/schema";
 
+  // Display names for the three stabiliser-pattern knobs (defaults css/Z/even).
+  const PATTERN_LABEL: Record<SurfacePattern, string> = {
+    css: "CSS",
+    xzzx: "XZZX",
+  };
+  const START_LABEL: Record<SurfaceStart, string> = {
+    Z: "EVEN-Z (Z-dominated)",
+    X: "EVEN-X (X-dominated)",
+  };
+  const EDGE_LABEL: Record<SurfaceEdge, string> = {
+    even: "Even boundary",
+    odd: "Odd boundary",
+  };
+
   interface Props {
     templates: TemplateInfo[];
+    channels: ChannelInfo[];
+    decoders: DecoderInfo[];
     spec: LatticeSpec; // current freeform lattice (from the canvas)
     compileResult: CompileResponse | null;
     compileError: string | null;
     running: boolean;
     runError: string | null;
-    oncompile: (req: RunRequest) => void;
+    onspecchange: (code: string, distance: number) => void; // "" | "freeform" | family
+    onbuild: (req: RunRequest | null) => void; // live request for auto-compile
     onrun: (req: RunRequest) => void;
     onstop: () => void;
   }
 
   let {
     templates,
+    channels,
+    decoders,
     spec,
     compileResult,
     compileError,
     running,
     runError,
-    oncompile,
+    onspecchange,
+    onbuild,
     onrun,
     onstop,
   }: Props = $props();
 
-  let mode = $state<"template" | "freeform">("template");
-
-  // template params
-  let family = $state<CodeFamily>("rotated_surface");
+  // Single source-of-truth selector. "" = nothing chosen (placeholder, so we
+  // never pre-select a random code); "freeform" reveals the canvas; anything
+  // else is a template family.
+  let code = $state<string>("");
   let distance = $state(3);
+  // Stabiliser-pattern knobs for the surface families; reset to the css/Z/even
+  // default whenever the family changes (every family supports it).
+  let pattern = $state<SurfacePattern>("css");
+  let start = $state<SurfaceStart>("Z");
+  let edge = $state<SurfaceEdge>("even");
 
-  // noise params
-  let channel = $state("DEPOLARIZE1");
+  let isFreeform = $derived(code === "freeform");
+  let isTemplate = $derived(code !== "" && code !== "freeform");
+
+  // The picked family's metadata + the options it offers along each knob axis. One
+  // option => no selector to show for that axis.
+  let codeTemplate = $derived<TemplateInfo | null>(
+    templates.find((t) => t.family === code) ?? null,
+  );
+  let patternOptions = $derived<SurfacePattern[]>(codeTemplate?.patterns ?? ["css"]);
+  let startOptions = $derived<SurfaceStart[]>(codeTemplate?.starts ?? ["Z"]);
+  let edgeOptions = $derived<SurfaceEdge[]>(codeTemplate?.edges ?? ["even"]);
+
+  // Tell Builder which source is active + at what distance so it can draw the
+  // selected code on the always-visible canvas. This is fired IMPERATIVELY from
+  // the code/distance change handlers below -- never from an $effect: a reactive
+  // effect here writes back into the shared canvas model (modelTick -> spec) and
+  // re-triggers itself, which is an infinite effect loop (effect_update_depth).
+  function emitSpec(): void {
+    onspecchange(code, distance);
+  }
+
+  // Family changed: drop any variant the new family doesn't offer (always safe to
+  // fall back to css_z), then redraw the canvas. Variant itself doesn't change the
+  // geometry, so it never needs to flow through onspecchange.
+  function onCodeChange(): void {
+    pattern = "css";
+    start = "Z";
+    edge = "even";
+    emitSpec();
+  }
+
+  // noise: explicit "— select —" placeholder; no random default channel.
+  let channel = $state<string>("");
   let p = $state(0.001);
-  let sweep = $state(false);
+  let theta = $state(0.05);
+  let vx = $state(0.001);
+  let vy = $state(0.001);
+  let vz = $state(0.001);
+  let sweep = $state(true);
   let sweepMin = $state(0.001);
-  let sweepMax = $state(0.02);
+  let sweepMax = $state(0.05);
   let sweepSteps = $state(8);
 
   // run params
   let rounds = $state(3);
   let shots = $state(10000);
-  let decoder = $state<DecoderName>("mwpm");
+  let decoder = $state<DecoderName | "">("");
+  // True once the user touches the decoder, so auto-steering stops overriding.
+  let decoderTouched = $state(false);
 
-  // Keep family/decoder pointed at something the server actually offers.
+  let channelInfo = $derived<ChannelInfo | null>(
+    channels.find((c) => c.name === channel) ?? null,
+  );
+  let decoderInfo = $derived<DecoderInfo | null>(
+    decoders.find((d) => d.name === decoder) ?? null,
+  );
+  let nonPauli = $derived(channelInfo !== null && !channelInfo.is_pauli);
+  // Only p / vec3 args can be swept; theta is a single coherent angle.
+  let sweepable = $derived(channelInfo === null || channelInfo.arg === "p");
+
+  // Steer the decoder when a channel is picked: coherent for non-Pauli noise,
+  // mwpm for Pauli — unless the user has explicitly chosen a decoder.
   $effect(() => {
-    if (templates.length > 0 && !templates.some((t) => t.family === family)) {
-      family = templates[0].family;
+    if (decoderTouched || channelInfo === null) {
+      return;
     }
+
+    decoder = nonPauli ? "coherent" : "mwpm";
   });
 
-  const channels = ["DEPOLARIZE1", "X_ERROR", "Z_ERROR"];
-
-  // Available decoders. `transformer` is a planned ML decoder (needs its own
-  // training loop) -- listed but disabled until that lands, so `decoder` only
-  // ever holds a value the server can run.
-  const decoders: { value: string; label: string; ready: boolean }[] = [
-    {
-      value: "mwpm",
-      label: "MWPM (matching)",
-      ready: true,
-    },
-    {
-      value: "bposd",
-      label: "BP+OSD",
-      ready: true,
-    },
-    {
-      value: "transformer",
-      label: "Transformer (soon)",
-      ready: false,
-    },
-  ];
+  // A DEM decoder picked against non-Pauli noise: honest-decoding warning.
+  let demOnNonPauli = $derived(
+    nonPauli &&
+      decoderInfo !== null &&
+      decoderInfo.pauli_only,
+  );
 
   // Geometric sweep from min..max over `steps` points (log-spaced reads nicer on
   // a log axis); falls back to a single value when steps <= 1.
@@ -105,60 +173,238 @@
     return out;
   }
 
-  function buildRequest(): RunRequest {
-    const noise = sweep
-      ? { channel, p_sweep: buildSweep() }
-      : { channel, p };
-    const base = {
-      rounds,
-      noise,
-      shots,
-      decoder,
-    };
-
-    if (mode === "template") {
-      return { ...base, template: { family, distance } };
+  // The noise payload, shaped by the channel's `arg`.
+  function buildNoise(): NoiseModel {
+    if (channelInfo?.arg === "theta") {
+      return { channel, theta };
     }
 
-    return { ...base, spec };
+    if (channelInfo?.arg === "vec3") {
+      return { channel, vec3: [vx, vy, vz] };
+    }
+
+    return sweep ? { channel, p_sweep: buildSweep() } : { channel, p };
+  }
+
+  // The full RunRequest, or null when the run matrix isn't complete yet (no
+  // code, no channel, no decoder). Builder uses null to clear stale stats.
+  function buildRequest(): RunRequest | null {
+    if (
+      code === "" ||
+      channel === "" ||
+      decoder === ""
+    ) {
+      return null;
+    }
+
+    const base = {
+      rounds,
+      noise: buildNoise(),
+      shots,
+      decoder: decoder as DecoderName,
+    };
+
+    if (isFreeform) {
+      return { ...base, spec };
+    }
+
+    return {
+      ...base,
+      template: {
+        family: code as CodeFamily,
+        distance,
+        pattern,
+        start,
+        edge,
+      },
+    };
+  }
+
+  let canRun = $derived(
+    code !== "" &&
+      channel !== "" &&
+      decoder !== "",
+  );
+
+  // Hand Builder a live request (or null) whenever any structural input changes,
+  // so it can debounce-compile the Surface stats and gate the Run button.
+  $effect(() => {
+    // touch every structural dep so this effect re-runs on any change.
+    const sig = JSON.stringify({
+      code,
+      distance,
+      pattern,
+      start,
+      edge,
+      rounds,
+      channel,
+      arg: channelInfo?.arg,
+      theta,
+      vx,
+      vy,
+      vz,
+      sweep,
+      sweepMin,
+      sweepMax,
+      sweepSteps,
+      p,
+      decoder,
+      boundary: spec.boundary,
+      tiles: spec.tiles,
+    });
+    void sig;
+
+    onbuild(buildRequest());
+  });
+
+  // Honest freeform readout: the server resolves *square* tiles by bounding box
+  // into a rotated-surface patch (gaps ignored); tri/hex tiles aren't simulated.
+  let freeform = $derived.by(() => {
+    const sq = spec.tiles.filter((t) => t.kind === "square");
+    const other = spec.tiles.length - sq.length;
+
+    if (sq.length === 0) {
+      return {
+        sq: 0,
+        other,
+        rows: 0,
+        cols: 0,
+      };
+    }
+
+    const rows = sq.map((t) => t.row);
+    const cols = sq.map((t) => t.col);
+
+    return {
+      sq: sq.length,
+      other,
+      rows: Math.max(...rows) - Math.min(...rows) + 1,
+      cols: Math.max(...cols) - Math.min(...cols) + 1,
+    };
+  });
+
+  // Is anything actually placed/selected to compile? Empty => show "empty",
+  // never a stale qubit count.
+  let hasContent = $derived(isTemplate || (isFreeform && freeform.sq > 0));
+
+  function fire(): void {
+    const req = buildRequest();
+
+    if (req !== null) {
+      onrun(req);
+    }
   }
 </script>
 
 <div class="panel">
   <div class="grp">
-    <div class="hd">Source</div>
-    <div class="seg">
-      <button
-        class:active={mode === "template"}
-        onclick={() => (mode = "template")}>Template</button
-      >
-      <button
-        class:active={mode === "freeform"}
-        onclick={() => (mode = "freeform")}>Freeform</button
-      >
-    </div>
+    <div class="hd">Code</div>
+    <label>
+      Code
+      <select bind:value={code} onchange={onCodeChange}>
+        <option value="" disabled selected>— select a code —</option>
+        {#each templates as t (t.family)}
+          <option value={t.family}>{t.label}</option>
+        {/each}
+        <option value="freeform">Freeform (draw)</option>
+      </select>
+    </label>
 
-    {#if mode === "template"}
-      <label>
-        Family
-        <select bind:value={family}>
-          {#each templates as t (t.family)}
-            <option value={t.family}>{t.label}</option>
-          {/each}
-          {#if templates.length === 0}
-            <option value="rotated_surface">rotated_surface</option>
-          {/if}
-        </select>
-      </label>
+    {#if isTemplate}
       <label>
         Distance
-        <input type="number" min="2" step="1" bind:value={distance} />
+        <input type="number" min="2" step="1" bind:value={distance} oninput={emitSpec} />
       </label>
-    {:else}
+      {#if patternOptions.length > 1}
+        <label>
+          Stabiliser type
+          <select bind:value={pattern}>
+            {#each patternOptions as v (v)}
+              <option value={v}>{PATTERN_LABEL[v]}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+      {#if startOptions.length > 1}
+        <label>
+          Colouring
+          <select bind:value={start}>
+            {#each startOptions as v (v)}
+              <option value={v}>{START_LABEL[v]}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+      {#if edgeOptions.length > 1}
+        <label>
+          Boundary
+          <select bind:value={edge}>
+            {#each edgeOptions as v (v)}
+              <option value={v}>{EDGE_LABEL[v]}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+    {:else if isFreeform}
       <p class="hint">
-        Using {spec.tiles.length} drawn tile{spec.tiles.length === 1 ? "" : "s"}
-        from the canvas. The server resolves stabilizers/observables.
+        {#if freeform.sq > 0}
+          {freeform.sq} square tile{freeform.sq === 1 ? "" : "s"} →
+          <b>{freeform.rows}×{freeform.cols}</b> rotated-surface patch (resolved
+          from the bounding box; gaps are ignored).
+        {:else}
+          Draw <b>square</b> tiles on the canvas to define a patch.
+        {/if}
+        {#if freeform.other > 0}
+          <span class="warntext">
+            {freeform.other} tri/hex tile{freeform.other === 1 ? "" : "s"} are
+            diagram-only and won't be simulated.
+          </span>
+        {/if}
       </p>
+    {:else}
+      <p class="hint">Choose a code family or <b>Freeform (draw)</b> to begin.</p>
+    {/if}
+  </div>
+
+  <div class="grp">
+    <div class="hd">Surface</div>
+    {#if !hasContent}
+      <div class="readout grid2 empty">
+        <span>qubits</span><b>0</b>
+        <span>data</span><b>0</b>
+        <span>stabilizers</span><b>0</b>
+        <span>detectors</span><b>0</b>
+        <span>observables</span><b>0</b>
+      </div>
+      <p class="hint">empty — nothing to simulate yet.</p>
+    {:else if compileError !== null}
+      <div class="readout err">Compile failed: {compileError}</div>
+    {:else if compileResult !== null && compileResult.ok}
+      <div class="readout grid2">
+        <span>qubits</span><b>{compileResult.num_qubits}</b>
+        <span>data</span><b>{compileResult.num_data}</b>
+        <span>stabilizers</span><b>{compileResult.num_stabilizers}</b>
+        <span>detectors</span><b>{compileResult.num_detectors}</b>
+        <span>observables</span><b>{compileResult.num_observables}</b>
+      </div>
+      {#if compileResult.warnings.length > 0}
+        <ul class="warns">
+          {#each compileResult.warnings as w}
+            <li>{w}</li>
+          {/each}
+        </ul>
+      {/if}
+    {:else if compileResult !== null}
+      <div class="readout warn">
+        Not simulatable yet:
+        <ul class="warns">
+          {#each compileResult.warnings as w}
+            <li>{w}</li>
+          {/each}
+        </ul>
+      </div>
+    {:else}
+      <p class="hint">Computing…</p>
     {/if}
   </div>
 
@@ -167,26 +413,58 @@
     <label>
       Channel
       <select bind:value={channel}>
-        {#each channels as c}
-          <option value={c}>{c}</option>
+        <option value="" disabled selected>— select a channel —</option>
+        {#each channels as c (c.name)}
+          <option value={c.name}>{c.label}{c.is_pauli ? "" : " ◇"}</option>
         {/each}
       </select>
     </label>
-    <label class="row">
-      <input type="checkbox" bind:checked={sweep} />
-      Sweep p
-    </label>
-    {#if sweep}
-      <div class="trio">
-        <label>min<input type="number" step="0.0001" bind:value={sweepMin} /></label>
-        <label>max<input type="number" step="0.0001" bind:value={sweepMax} /></label>
-        <label>steps<input type="number" min="1" step="1" bind:value={sweepSteps} /></label>
-      </div>
-    {:else}
-      <label>
-        Strength p
-        <input type="number" step="0.0001" min="0" max="1" bind:value={p} />
-      </label>
+
+    {#if channelInfo !== null}
+      <p class="hint">{channelInfo.note}</p>
+
+      {#if nonPauli}
+        <div class="readout warn">
+          Non-Pauli ({channelInfo.label}). Steered the decoder to
+          <b>coherent</b>;
+          {#if demOnNonPauli}
+            <span class="warntext"
+              >{decoderInfo?.label} is DEM-based and can't honestly decode
+              non-Pauli noise.</span
+            >
+          {/if}
+        </div>
+      {/if}
+
+      {#if channelInfo.arg === "theta"}
+        <label>
+          Angle θ (rad)
+          <input type="number" step="0.01" bind:value={theta} />
+        </label>
+      {:else if channelInfo.arg === "vec3"}
+        <div class="trio">
+          <label>p<sub>x</sub><input type="number" step="0.0001" bind:value={vx} /></label>
+          <label>p<sub>y</sub><input type="number" step="0.0001" bind:value={vy} /></label>
+          <label>p<sub>z</sub><input type="number" step="0.0001" bind:value={vz} /></label>
+        </div>
+      {:else}
+        <label class="row">
+          <input type="checkbox" bind:checked={sweep} />
+          Sweep p
+        </label>
+        {#if sweep}
+          <div class="trio">
+            <label>min<input type="number" step="0.0001" bind:value={sweepMin} /></label>
+            <label>max<input type="number" step="0.0001" bind:value={sweepMax} /></label>
+            <label>steps<input type="number" min="1" step="1" bind:value={sweepSteps} /></label>
+          </div>
+        {:else}
+          <label>
+            Strength p
+            <input type="number" step="0.0001" min="0" max="1" bind:value={p} />
+          </label>
+        {/if}
+      {/if}
     {/if}
   </div>
 
@@ -196,43 +474,32 @@
     <label>Shots<input type="number" min="1" step="1000" bind:value={shots} /></label>
     <label>
       Decoder
-      <select bind:value={decoder}>
-        {#each decoders as d (d.value)}
-          <option value={d.value} disabled={!d.ready}>{d.label}</option>
+      <select
+        bind:value={decoder}
+        onchange={() => (decoderTouched = true)}
+      >
+        <option value="" disabled selected>— select a decoder —</option>
+        {#each decoders as d (d.name)}
+          <option value={d.name}>{d.label}{d.pauli_only ? "" : " ◇"}</option>
         {/each}
       </select>
     </label>
+    {#if decoderInfo !== null}
+      <p class="hint">{decoderInfo.note}</p>
+    {/if}
   </div>
 
   <div class="grp">
     <div class="actions">
-      <button onclick={() => oncompile(buildRequest())} disabled={running}>
-        Compile
-      </button>
       {#if running}
         <button class="run stop" onclick={onstop}>Stop</button>
       {:else}
-        <button class="run" onclick={() => onrun(buildRequest())}>Run</button>
+        <button class="run" onclick={fire} disabled={!canRun}>Run</button>
       {/if}
     </div>
 
-    {#if compileError !== null}
-      <div class="readout err">Compile failed: {compileError}</div>
-    {:else if compileResult !== null}
-      <div class="readout" class:warn={!compileResult.ok}>
-        <div>qubits: {compileResult.num_qubits}</div>
-        <div>data: {compileResult.num_data}</div>
-        <div>stabilizers: {compileResult.num_stabilizers}</div>
-        <div>detectors: {compileResult.num_detectors}</div>
-        <div>observables: {compileResult.num_observables}</div>
-        {#if compileResult.warnings.length > 0}
-          <ul class="warns">
-            {#each compileResult.warnings as w}
-              <li>{w}</li>
-            {/each}
-          </ul>
-        {/if}
-      </div>
+    {#if !canRun && !running}
+      <p class="hint">Pick a code, a noise channel, and a decoder to run.</p>
     {/if}
 
     {#if runError !== null}
@@ -292,15 +559,6 @@
   input,
   select {
     width: 100%;
-  }
-
-  .seg {
-    display: flex;
-    gap: 6px;
-  }
-
-  .seg button {
-    flex: 1;
   }
 
   .trio {
@@ -392,12 +650,40 @@
   }
 
   .readout.warn {
-    border-color: var(--x);
+    border-color: color-mix(in srgb, var(--x) 55%, transparent);
+    color: var(--muted);
   }
 
   .readout.err {
     border-color: var(--x);
     color: var(--x);
+  }
+
+  /* two-column label/value grid for the Surface stats */
+  .readout.grid2 {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 12px;
+  }
+
+  .readout.grid2 span {
+    color: var(--muted);
+  }
+
+  .readout.grid2 b {
+    color: var(--fg);
+    text-align: right;
+  }
+
+  /* zeroed stats when nothing is chosen/drawn: read as inactive, never stale. */
+  .readout.grid2.empty,
+  .readout.grid2.empty b {
+    color: var(--faint);
+  }
+
+  /* the ◇ marker on non-Pauli channels/decoders */
+  sub {
+    font-size: 0.7em;
   }
 
   .warns {
@@ -411,5 +697,16 @@
     color: var(--muted);
     line-height: 1.5;
     margin: 0;
+  }
+
+  .hint b {
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .warntext {
+    display: block;
+    margin-top: 4px;
+    color: var(--x);
   }
 </style>

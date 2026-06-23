@@ -6,7 +6,9 @@ import webbrowser
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="qliff", description="launch qliff studio")
+    parser = argparse.ArgumentParser(
+        prog="qliff-server", description="launch qliff studio"
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8731)
     parser.add_argument("--no-browser", action="store_true")
@@ -24,9 +26,10 @@ def main() -> None:
         # open once the server is likely up; harmless if it races slightly.
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
-    print(f"qliff studio -> {url}")
+    print(f"\n  qliff studio  ->  {url}")
+    print("  open that URL in a browser; run results stream below. Ctrl-C to stop.\n")
     uvicorn.run(
-        "qliff.server.app:app", host=args.host, port=args.port, log_level="info"
+        "qliff.server.app:app", host=args.host, port=args.port, log_level="warning"
     )
 
 

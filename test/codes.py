@@ -1,17 +1,32 @@
+import itertools
 import os
 import sys
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from coherent import _quasi_sample
 from MDR import Exam, Question, load
 
 from qliff.qec import (
     DetectorErrorModel,
     DetectorSampler,
+    logical_fidelity,
+    rotated_surface_code,
     toric_code,
     unrotated_surface_code,
 )
-from qliff.qec.codes import _toric_grid, _unrotated_grid
+from qliff.qec.codes import (
+    SURFACE_PATTERNS,
+    SURFACE_STARTS,
+    SURFACE_EDGES,
+    _rotated_layout,
+    _toric_grid,
+    _unrotated_grid,
+    _unrotated_layout,
+)
+from qliff.qec.decoder import make_circuit_decoder
 
 
 def _odd_overlap(a, b):
@@ -19,6 +34,19 @@ def _odd_overlap(a, b):
     Two opposite-type Pauli supports anticommute iff their overlap is odd.
     """
     return len(set(a) & set(b)) % 2 == 1
+
+
+def _paulis_commute(a, b):
+    """
+    Two mixed-Pauli supports [(qubit, "X"|"Z")] commute iff they act with
+    DIFFERENT (anticommuting) single-qubit Paulis on an even number of shared
+    qubits.
+    """
+    da = dict(a)
+    db = dict(b)
+    differ = sum(1 for q in set(da) & set(db) if da[q] != db[q])
+
+    return differ % 2 == 0
 
 
 class UnrotatedTests(Question):
@@ -204,10 +232,166 @@ class ToricTests(Question):
         )
 
 
+def _counts(c):
+    """
+    (qubits, detectors, observables) of a built circuit.
+    """
+    return (c.num_qubits, len(c.detectors), len(c.observables))
+
+
+def _rotated_combos():
+    """
+    All (pattern, start, edge) knob combinations for the rotated family.
+    """
+    return list(itertools.product(SURFACE_PATTERNS, SURFACE_STARTS, SURFACE_EDGES))
+
+
+class SurfaceVariantTests(Question):
+    def test_noiseless_silent(self):
+        """
+        At p=0 every rotated (pattern x start x edge) and unrotated (pattern x start)
+        surface variant fires no detector and no logical flip.
+        """
+        bad = []
+        for pat, st, ed in _rotated_combos():
+            c = rotated_surface_code(3, 3, 0.0, pattern=pat, start=st, edge=ed)
+            dets, obs = DetectorSampler(c).sample(128, seed=0)
+            if int(dets.sum()) + int(obs.sum()) != 0:
+                bad.append(f"rotated/{pat}/{st}/{ed}")
+        for pat, st in itertools.product(SURFACE_PATTERNS, SURFACE_STARTS):
+            c = unrotated_surface_code(3, 3, 0.0, pattern=pat, start=st)
+            dets, obs = DetectorSampler(c).sample(128, seed=0)
+            if int(dets.sum()) + int(obs.sum()) != 0:
+                bad.append(f"unrotated/{pat}/{st}")
+
+        self.assertEqual(bad, [], msg="every variant must be silent at p=0")
+
+    def test_stabilizers_commute(self):
+        """
+        Every surface variant is a valid stabiliser code: all checks pairwise commute
+        and the logical commutes with every stabiliser.
+        """
+        bad = []
+        layouts = [
+            (f"rotated/{p}/{s}/{e}", _rotated_layout(3, p, s, e))
+            for p, s, e in _rotated_combos()
+        ]
+        layouts += [
+            (f"unrotated/{p}/{s}", _unrotated_layout(3, p, s))
+            for p, s in itertools.product(SURFACE_PATTERNS, SURFACE_STARTS)
+        ]
+        for tag, (_n, stabs, obs, _qb) in layouts:
+            sup = [corners for _p, corners in stabs]
+            pairs_ok = all(
+                _paulis_commute(sup[i], sup[j])
+                for i in range(len(sup))
+                for j in range(i + 1, len(sup))
+            )
+            logical_ok = all(_paulis_commute(obs[0], s) for s in sup)
+            if not (pairs_ok and logical_ok):
+                bad.append(tag)
+
+        self.assertEqual(bad, [], msg="variants must be valid stabiliser codes")
+
+    def test_structure_matches_default(self):
+        """
+        Each variant is a Clifford conjugation of the css/Z/even default, so its
+        qubit / detector / observable counts match it at d=3.
+        """
+        bad = []
+        rref = _counts(rotated_surface_code(3, 3, 0.0))
+        for pat, st, ed in _rotated_combos():
+            if (
+                _counts(rotated_surface_code(3, 3, 0.0, pattern=pat, start=st, edge=ed))
+                != rref
+            ):
+                bad.append(f"rotated/{pat}/{st}/{ed}")
+        uref = _counts(unrotated_surface_code(3, 3, 0.0))
+        for pat, st in itertools.product(SURFACE_PATTERNS, SURFACE_STARTS):
+            if (
+                _counts(unrotated_surface_code(3, 3, 0.0, pattern=pat, start=st))
+                != uref
+            ):
+                bad.append(f"unrotated/{pat}/{st}")
+
+        self.assertEqual(bad, [], msg="variant structure must match the default")
+
+    def test_decode_below_trivial(self):
+        """
+        Under depolarizing noise every rotated variant's exact-MLD logical error rate
+        is far below the trivial always-zero predictor -- code distance is preserved.
+        """
+        for pat, st, ed in _rotated_combos():
+            c = rotated_surface_code(3, 3, 0.05, pattern=pat, start=st, edge=ed)
+            dets, obs = DetectorSampler(c).sample(2500, seed=7)
+            ler = 1.0 - logical_fidelity(
+                make_circuit_decoder("mld", c).decode_batch(dets), obs
+            )
+            trivial = 1.0 - logical_fidelity(np.zeros_like(obs), obs)
+
+            self.assertLess(
+                ler,
+                trivial - 0.05,
+                msg=f"{pat}/{st}/{ed} LER {ler:.3f} !< {trivial:.3f}",
+            )
+
+    def test_colouring_equivalent_under_depolarizing(self):
+        """
+        EVEN-Z (start=Z) and EVEN-X (start=X) are equivalent under symmetric
+        (depolarizing) noise -- their logical error rates agree within sampling.
+        """
+        out = {}
+        for st in ("Z", "X"):
+            c = rotated_surface_code(3, 3, 0.06, start=st)
+            dets, obs = DetectorSampler(c).sample(6000, seed=2)
+            out[st] = 1.0 - logical_fidelity(
+                make_circuit_decoder("mld", c).decode_batch(dets), obs
+            )
+
+        self.assertLess(
+            abs(out["Z"] - out["X"]),
+            0.02,
+            msg=f"depol Z {out['Z']:.3f} vs X {out['X']:.3f}",
+        )
+
+    def test_colouring_splits_under_amplitude_damping(self):
+        """
+        Under amplitude damping the EVEN-Z / EVEN-X colourings are NOT equivalent --
+        the report's central asymmetry (H1): the Z-memory detects the Z-coupled AD
+        errors far better than its X-dual.
+        """
+        out = {}
+        for st in ("Z", "X"):
+            c = rotated_surface_code(3, 2, 0.12, channel="AMPLITUDE_DAMP", start=st)
+            dets, obs = _quasi_sample(c, 1500, 7)
+            out[st] = 1.0 - logical_fidelity(
+                make_circuit_decoder("coherent", c).decode_batch(dets), obs
+            )
+
+        self.assertGreater(
+            abs(out["Z"] - out["X"]),
+            0.03,
+            msg=f"AD Z {out['Z']:.3f} vs X {out['X']:.3f} must split",
+        )
+
+    def test_unknown_knob_rejected(self):
+        """
+        An unknown pattern / start / edge raises ValueError naming the supported set.
+        """
+        with self.assertRaises(ValueError):
+            rotated_surface_code(3, 3, 0.0, pattern="bogus")
+
+        with self.assertRaises(ValueError):
+            rotated_surface_code(3, 3, 0.0, start="Y")
+
+
 if __name__ == "__main__":
     rc = 0
     rc |= Exam("Unrotated", "Unrotated planar surface code", "unrotated.md").run(
         load(UnrotatedTests)
     )
     rc |= Exam("Toric", "Periodic toric code", "toric.md").run(load(ToricTests))
+    rc |= Exam(
+        "SurfaceVariants", "Surface-code stabiliser-pattern variants", "variants.md"
+    ).run(load(SurfaceVariantTests))
     sys.exit(rc)

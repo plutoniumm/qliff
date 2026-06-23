@@ -98,7 +98,10 @@ class BpOsdDecoder:
 
 def make_decoder(name: str, dem: DetectorErrorModel) -> Decoder:
     """
-    Dispatch a decoder by name: "mwpm" (default) or "bposd".
+    Dispatch a DEM decoder by name: "mwpm" (default), "bposd", or "mld"/"tn"
+    (exact maximum-likelihood by tensor contraction; "tn" will gain bond-dim
+    truncation). "coherent" is circuit-aware, not DEM-based -- request it through
+    make_circuit_decoder, which has access to the circuit's signed noise branches.
     """
     key = name.lower()
     if key == "mwpm":
@@ -107,4 +110,64 @@ def make_decoder(name: str, dem: DetectorErrorModel) -> Decoder:
     if key == "bposd":
         return BpOsdDecoder(dem)
 
-    raise ValueError(f"unknown decoder {name!r}; expected 'mwpm' or 'bposd'")
+    if key in ("mld", "tn"):
+        from .tn import MaxLikelihoodDecoder
+
+        return MaxLikelihoodDecoder(dem)
+
+    if key == "coherent":
+        raise ValueError(
+            "'coherent' decodes the circuit's signed noise branches, not a DEM; "
+            "build it via make_circuit_decoder(name, circuit)"
+        )
+
+    raise ValueError(
+        f"unknown decoder {name!r}; expected 'mwpm', 'bposd', 'mld', 'tn', or 'coherent'"
+    )
+
+
+def _circuit_is_pauli(circuit) -> bool:
+    """
+    True iff every noise location in the circuit is a Pauli channel, so a
+    DetectorErrorModel can represent it. Non-Pauli locations (coherent RZ/RX,
+    amplitude damping) carry signed / complex branch weights no DEM can hold.
+    """
+    from ..noise.channel import NOISE_FACTORIES, make_channel
+    from ..simulator import CLIFFORD_OPS
+
+    for name, _targets, arg in circuit.instructions:
+        if name in CLIFFORD_OPS or name not in NOISE_FACTORIES:
+            continue
+
+        if not make_channel(name, arg).is_pauli:
+            return False
+
+    return True
+
+
+def make_circuit_decoder(name: str, circuit) -> Decoder:
+    """
+    Circuit-aware decoder factory and the single entry point shared by the
+    threshold / server code.
+
+    The tensor-network / maximum-likelihood decoder ("tn"/"mld") spans BOTH noise
+    regimes: it contracts a DetectorErrorModel exactly when the circuit is Pauli,
+    and falls back to the circuit-aware signed-quasiprobability TN (CoherentDecoder,
+    which reduces to exact MLD on Pauli noise) when it isn't -- so "tn"/"mld" decode
+    coherent / amplitude-damping circuits too. "coherent" forces that circuit-aware
+    path unconditionally. The graphlike DEM decoders ("mwpm", "bposd") genuinely
+    cannot represent non-Pauli noise and take the DEM path, where DetectorErrorModel
+    raises on it.
+    """
+    key = name.lower()
+    if key == "coherent":
+        from .coherent import CoherentDecoder
+
+        return CoherentDecoder(circuit)
+
+    if key in ("tn", "mld") and not _circuit_is_pauli(circuit):
+        from .coherent import CoherentDecoder
+
+        return CoherentDecoder(circuit)
+
+    return make_decoder(name, DetectorErrorModel(circuit))

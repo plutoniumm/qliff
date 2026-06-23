@@ -69,7 +69,9 @@ setup(
     # the built SPA (./do studio -> qliff/server/static) ships in the wheel.
     include_package_data=True,
     package_data={"qliff": ["server/static/*", "server/static/**/*"]},
-    entry_points={"console_scripts": ["qliff = qliff.server.cli:main"]},
+    # the console command is `qliff-server` (not `qliff`) so it doesn't collide
+    # with the `qliff` import / package directory name on PATH.
+    entry_points={"console_scripts": ["qliff-server = qliff.server.cli:main"]},
     # Tag wheels cp311-abi3 (PEP 384 stable ABI) regardless of the building
     # Python, so one wheel per platform serves every Python >= 3.11. Matches the
     # abi3-py311 pyo3 feature; without this bdist_wheel would tag version-specific

@@ -1,8 +1,10 @@
 <script lang="ts">
-  // SVG editing surface. Renders placed tiles, draws the selection highlight,
-  // supports Finder-style marquee multi-select on empty space, drag-to-move of
-  // the selection (snapped to the grid), palette drag/drop and click-to-place,
-  // and the full keyboard set (delete / copy / paste / undo / redo / rotate).
+  // SVG editing surface. Renders placed tiles + the edge-adjacency links between
+  // them, draws the selection highlight, supports Finder-style marquee
+  // multi-select on empty space (live), drag-to-move of the selection (grid
+  // snapped), palette drag/drop and click-to-place, and the full keyboard set
+  // (delete / copy / paste / undo / redo / rotate). A HUD shows live tile/group
+  // counts and the current selection so the lattice is never a black box.
   //
   // The CanvasModel holds all state; we bump a `tick` counter after every
   // mutation to force Svelte to re-read it (the model mutates in place).
@@ -21,19 +23,40 @@
   interface Props {
     model: CanvasModel;
     armed: TileKind | null;
+    rev: number; // external model-version from the parent (e.g. template loads)
     onarm: (kind: TileKind | null) => void;
     onchange: () => void;
   }
 
-  let { model, armed, onarm, onchange }: Props = $props();
+  let { model, armed, rev, onarm, onchange }: Props = $props();
 
-  // Re-render trigger; mutating methods bump this via touch().
+  // Re-render trigger. Internal edits bump `tick`; external model mutations (a
+  // template construction in the parent) arrive as a changed `rev`. Both must
+  // force a re-read of the in-place model, so everything keys on their sum.
   let tick = $state(0);
+  let version = $derived(tick + rev);
 
   function touch(): void {
     tick += 1;
     onchange();
   }
+
+  // Live, derived views of the (non-reactive) model, recomputed on every change.
+  let stats = $derived.by(() => {
+    void version;
+
+    return model.stats();
+  });
+  let selectedCount = $derived.by(() => {
+    void version;
+
+    return model.selected.size;
+  });
+  let links = $derived.by(() => {
+    void version;
+
+    return model.links();
+  });
 
   const W = 760;
   const H = 560;
@@ -43,7 +66,7 @@
   // Interaction state.
   type Drag =
     | { kind: "none" }
-    | { kind: "marquee"; start: Point; cur: Point; additive: boolean }
+    | { kind: "marquee"; start: Point; cur: Point; additive: boolean; base: Set<string> }
     | { kind: "move"; last: Point; moved: boolean };
   let drag: Drag = $state({ kind: "none" });
 
@@ -104,6 +127,7 @@
         start: p,
         cur: p,
         additive,
+        base: new Set(model.selected),
       };
 
       if (!additive) {
@@ -139,6 +163,13 @@
 
     if (drag.kind === "marquee") {
       drag = { ...drag, cur: p };
+      const r = normalizeRect(drag.start, p);
+
+      // live selection feedback: re-evaluate every move from the captured base.
+      if (r.w > 3 || r.h > 3) {
+        model.selectInRect(r, true, drag.base);
+        touch();
+      }
 
       return;
     }
@@ -160,15 +191,6 @@
   }
 
   function onPointerUp(ev: PointerEvent): void {
-    if (drag.kind === "marquee") {
-      const r = marqueeRect();
-
-      if (r.w > 3 || r.h > 3) {
-        model.selectInRect(r, drag.additive);
-        touch();
-      }
-    }
-
     svgEl?.releasePointerCapture(ev.pointerId);
     drag = { kind: "none" };
   }
@@ -218,6 +240,14 @@
     }
   }
 
+  // Right-click anywhere disarms the palette (so you can switch to selecting).
+  function onContextMenu(ev: MouseEvent): void {
+    if (armed !== null) {
+      ev.preventDefault();
+      onarm(null);
+    }
+  }
+
   // -- keyboard -------------------------------------------------------------
 
   function onKeyDown(ev: KeyboardEvent): void {
@@ -259,12 +289,11 @@
   }
 
   // Grid backdrop lines.
-  function gridLines(): { major: boolean; x1: number; y1: number; x2: number; y2: number }[] {
-    const out: { major: boolean; x1: number; y1: number; x2: number; y2: number }[] = [];
+  function gridLines(): { x1: number; y1: number; x2: number; y2: number }[] {
+    const out: { x1: number; y1: number; x2: number; y2: number }[] = [];
 
     for (let x = gridToPixel(0, 0).x; x < W; x += CELL) {
       out.push({
-        major: false,
         x1: x,
         y1: 0,
         x2: x,
@@ -274,7 +303,6 @@
 
     for (let y = gridToPixel(0, 0).y; y < H; y += CELL) {
       out.push({
-        major: false,
         x1: 0,
         y1: y,
         x2: W,
@@ -286,55 +314,162 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<svg
-  bind:this={svgEl}
-  class="canvas"
-  width={W}
-  height={H}
-  viewBox={`0 0 ${W} ${H}`}
-  tabindex="0"
-  role="application"
-  aria-label="Lattice editing canvas"
-  onpointerdown={onPointerDown}
-  onpointermove={onPointerMove}
-  onpointerup={onPointerUp}
-  onkeydown={onKeyDown}
-  ondrop={onDrop}
-  ondragover={onDragOver}
->
-  <!-- track tick so the model's in-place mutations re-render -->
-  {#key tick}
-    <g class="grid">
-      {#each gridLines() as l}
-        <line x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} />
-      {/each}
-    </g>
-
-    {#each model.tiles as t (t.id)}
-      <polygon
-        points={polyPoints(tilePolygon(t))}
-        fill={fill(t.row, t.col)}
-        class="tile"
-        class:selected={model.selected.has(t.id)}
-      />
-    {/each}
-
-    {#if drag.kind === "marquee"}
-      {@const r = marqueeRect()}
-      <rect
-        class="marquee"
-        x={r.x}
-        y={r.y}
-        width={r.w}
-        height={r.h}
-      />
+<div class="canvas-wrap">
+  <div class="hud">
+    <span class="stat">tiles <b>{stats.count}</b></span>
+    <span class="stat" class:warn={stats.groups > 1}>
+      groups <b>{stats.groups}</b>
+    </span>
+    {#if stats.count > 0}
+      <span class="stat">bbox <b>{stats.rows}×{stats.cols}</b></span>
     {/if}
-  {/key}
-</svg>
+    <span class="stat sel" class:on={selectedCount > 0}>
+      selected <b>{selectedCount}</b>
+    </span>
+  </div>
+
+  {#if armed !== null}
+    <div class="armband">
+      Placing <b>{armed}</b> — click empty grid to drop · <kbd>Esc</kbd> or
+      right-click to stop
+    </div>
+  {/if}
+
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <svg
+    bind:this={svgEl}
+    class="canvas"
+    class:placing={armed !== null}
+    width={W}
+    height={H}
+    viewBox={`0 0 ${W} ${H}`}
+    tabindex="0"
+    role="application"
+    aria-label="Lattice editing canvas"
+    onpointerdown={onPointerDown}
+    onpointermove={onPointerMove}
+    onpointerup={onPointerUp}
+    onkeydown={onKeyDown}
+    ondrop={onDrop}
+    ondragover={onDragOver}
+    oncontextmenu={onContextMenu}
+  >
+    <!-- track version so the model's in-place mutations re-render -->
+    {#key version}
+      <g class="grid">
+        {#each gridLines() as l}
+          <line x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} />
+        {/each}
+      </g>
+
+      <!-- adjacency links: shows which tiles actually touch (share an edge) -->
+      <g class="links">
+        {#each links as ln, i (i)}
+          <line x1={ln.a.x} y1={ln.a.y} x2={ln.b.x} y2={ln.b.y} />
+        {/each}
+      </g>
+
+      {#each model.tiles as t (t.id)}
+        <polygon
+          points={polyPoints(tilePolygon(t))}
+          fill={fill(t.row, t.col)}
+          class="tile"
+          class:selected={model.selected.has(t.id)}
+        />
+      {/each}
+
+      {#if drag.kind === "marquee"}
+        {@const r = marqueeRect()}
+        <rect
+          class="marquee"
+          x={r.x}
+          y={r.y}
+          width={r.w}
+          height={r.h}
+        />
+      {/if}
+    {/key}
+  </svg>
+
+  <div class="hint">
+    <span>drag empty space → <b>select</b></span>
+    <span>drag a tile → <b>move</b></span>
+    <span><kbd>R</kbd> rotate</span>
+    <span><kbd>⌘A</kbd> all</span>
+    <span><kbd>⌘C</kbd>/<kbd>⌘V</kbd> copy</span>
+    <span><kbd>Del</kbd> delete</span>
+    <span><kbd>⌘Z</kbd> undo</span>
+  </div>
+</div>
 
 <style>
+  .canvas-wrap {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .hud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    font-size: 11.5px;
+  }
+
+  .stat {
+    padding: 3px 9px;
+    border-radius: 99px;
+    background: color-mix(in srgb, var(--bg-2) 60%, transparent);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+
+  .stat b {
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat.warn {
+    border-color: color-mix(in srgb, var(--x) 55%, transparent);
+    color: var(--x);
+  }
+
+  .stat.warn b {
+    color: var(--x);
+  }
+
+  .stat.sel.on {
+    border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+    color: var(--fg);
+    box-shadow: var(--glow-accent);
+  }
+
+  .armband {
+    position: absolute;
+    top: 38px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    padding: 6px 14px;
+    border-radius: 99px;
+    font-size: 12px;
+    color: var(--fg);
+    background: var(--grad-phase-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    box-shadow: var(--glow-accent);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  .armband b {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
   .canvas {
     width: 100%;
     height: auto;
@@ -348,9 +483,20 @@
     touch-action: none;
   }
 
+  .canvas.placing {
+    cursor: crosshair;
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+
   .grid line {
     stroke: var(--line);
     stroke-width: 1;
+  }
+
+  .links line {
+    stroke: color-mix(in srgb, var(--accent) 55%, transparent);
+    stroke-width: 2;
+    stroke-linecap: round;
   }
 
   .tile {
@@ -380,5 +526,28 @@
     stroke: var(--accent);
     stroke-width: 1;
     stroke-dasharray: 4 3;
+  }
+
+  .hint {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    font-size: 11px;
+    color: var(--faint);
+  }
+
+  .hint b {
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  kbd {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--bg-2) 70%, transparent);
+    border: 1px solid var(--line);
+    color: var(--muted);
   }
 </style>

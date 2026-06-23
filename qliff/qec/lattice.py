@@ -1,13 +1,35 @@
 from __future__ import annotations
 
 from ..circuit import Circuit
+from ..noise.channel import NOISE_FACTORIES
 
-_NOISE_TARGETS = {
-    "DEPOLARIZE1": 1,
-    "X_ERROR": 1,
-    "Y_ERROR": 1,
-    "Z_ERROR": 1,
-}
+# Two-qubit channels act on target pairs; PAULI_CHANNEL_1 wants a (px, py, pz)
+# vector arg. Everything else is a scalar-arg single-qubit channel on the data.
+_TWO_QUBIT_CHANNELS = {"DEPOLARIZE2"}
+_VECTOR_CHANNELS = {"PAULI_CHANNEL_1"}
+
+
+def _apply_data_noise(c: Circuit, channel: str, num_data: int, p: float) -> None:
+    """
+    Emit the per-round data noise for `channel` at strength p (or theta). 1Q
+    scalar channels hit every data qubit; PAULI_CHANNEL_1 spreads p evenly over
+    (px, py, pz); DEPOLARIZE2 acts on adjacent data pairs.
+    """
+    if channel in _VECTOR_CHANNELS:
+        arg = (p / 3.0, p / 3.0, p / 3.0)
+        for q in range(num_data):
+            c.append(channel, [q], arg)
+
+        return
+
+    if channel in _TWO_QUBIT_CHANNELS:
+        for q in range(0, num_data - 1, 2):
+            c.append(channel, [q, q + 1], p)
+
+        return
+
+    for q in range(num_data):
+        c.append(channel, [q], p)
 
 
 def build_circuit(
@@ -22,16 +44,17 @@ def build_circuit(
     """
     Assemble a Z-memory syndrome-extraction circuit from an explicit stabilizer
     list. Each stabilizer ("X"/"Z", data-qubit indices) gets one ancilla;
-    `rounds` of extraction run with per-round single-qubit noise on the data.
-    Only Z-checks declare round-to-round detectors (graphlike); the final data M
-    seeds boundary Z detectors and the Z-type logical observable(s). X-type
-    observables are dropped: a Z-basis readout cannot reconstruct them
-    deterministically. `boundary` is patch metadata (open/periodic) -- the
-    stabilizer list already carries the topology, so it only validates here.
+    `rounds` of extraction run with per-round `noise_channel` noise on the data
+    (any qliff.noise channel: Pauli, coherent RZ/RX, or amplitude damping). Only
+    Z-checks declare round-to-round detectors (graphlike); the final data M seeds
+    boundary Z detectors and the Z-type logical observable(s). X-type observables
+    are dropped: a Z-basis readout cannot reconstruct them deterministically.
+    `boundary` is patch metadata (open/periodic) -- the stabilizer list already
+    carries the topology, so it only validates here.
     """
     if boundary not in ("open", "periodic"):
         raise ValueError(f"boundary must be 'open' or 'periodic', got {boundary!r}")
-    if noise_channel not in _NOISE_TARGETS:
+    if noise_channel not in NOISE_FACTORIES:
         raise ValueError(f"unsupported noise channel {noise_channel!r}")
 
     z_checks = [(i, q) for i, (k, q) in enumerate(stabilizers) if k.upper() == "Z"]
@@ -42,8 +65,7 @@ def build_circuit(
     c = Circuit()
 
     for r in range(rounds):
-        for q in range(num_data):
-            c.append(noise_channel, [q], p)
+        _apply_data_noise(c, noise_channel, num_data, p)
 
         for slot, (orig, touch) in enumerate(order):
             anc = anc_of[orig]

@@ -4,7 +4,6 @@
   // tab swap goes through the View Transitions API so the content cross-fades.
   import Diagrams from "./routes/diagrams/Diagrams.svelte";
   import Builder from "./routes/builder/Builder.svelte";
-  import QuantumBackground from "$lib/QuantumBackground.svelte";
   import { viewTransition } from "$lib/transition";
 
   let view = $state<"diagrams" | "builder">("diagrams");
@@ -20,15 +19,21 @@
   }
 </script>
 
-<QuantumBackground />
-
 <nav class="topnav">
   <span class="brand gradient-text">qliff studio</span>
   <div class="tabs">
-    <button class="tab" class:active={view === "diagrams"} onclick={() => show("diagrams")}>
+    <button
+      class="tab"
+      class:active={view === "diagrams"}
+      onclick={() => show("diagrams")}
+    >
       Diagrams
     </button>
-    <button class="tab" class:active={view === "builder"} onclick={() => show("builder")}>
+    <button
+      class="tab"
+      class:active={view === "builder"}
+      onclick={() => show("builder")}
+    >
       Builder
     </button>
   </div>

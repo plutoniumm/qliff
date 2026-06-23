@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ./do develop | build | test | bench | deploy | lint | docs | studio | serve | tex | wheels
+# ./do develop | build | test | bench | deploy | lint | docs | studio | serve | dev | tex | wheels
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -289,19 +289,41 @@ docs() {
 }
 
 # build the Studio frontend into qliff/server/static (shipped in the wheel).
+# After building, run the headless puppeteer smoke test (boots the SPA in a real
+# Chromium, drives the Builder) to catch white-screen reactive loops -- skipped
+# when puppeteer isn't installed (e.g. CI wheel builds) so it never blocks them.
 studio() {
   has npm
   cd "$ROOT/studio"
   [ -d node_modules ] || npm install
   npm run build
+  if [ -d node_modules/puppeteer ]; then
+    node test/smoke.mjs
+  else
+    echo ">> studio smoke skipped (puppeteer not installed)" >&2
+  fi
 }
 
-# launch the Studio web server (the `qliff` command) from the source tree.
+# launch the Studio web server (the `qliff-server` command) from the source tree.
 # extra args pass through (e.g. ./do serve --port 9000 --no-browser).
 serve() {
   has python
   cd "$ROOT"
   python -m qliff "$@"
+}
+
+# the full dev stack in one command: the qliff API server (background, default
+# port) + the Vite dev server with HMR (foreground). Vite proxies /api to the
+# API server, so the browser only ever talks to one origin (http://127.0.0.1:5174).
+# Ctrl-C stops both.
+dev() {
+  has python npm
+  cd "$ROOT/studio"
+  [ -d node_modules ] || npm install
+  python -m qliff --no-browser &
+  local api_pid=$!
+  trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM
+  npm run dev
 }
 
 # compile a LaTeX/beamer file with tectonic. Args are passed straight through, so
@@ -335,10 +357,11 @@ case "${1:-}" in
   docs)    shift; docs "$@" ;;
   studio)  studio ;;
   serve)   shift; serve "$@" ;;
+  dev)     dev ;;
   tex)     shift; tex "$@" ;;
   wheels)  shift; wheels "$@" ;;
   *)
-    echo "usage: ./do {develop|build|test|bench|deploy|lint|docs|studio|serve|tex|wheels}" >&2
+    echo "usage: ./do {develop|build|test|bench|deploy|lint|docs|studio|serve|dev|tex|wheels}" >&2
     exit 1
     ;;
 esac

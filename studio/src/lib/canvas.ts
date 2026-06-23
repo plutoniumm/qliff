@@ -33,6 +33,40 @@ function freshId(kind: TileKind): string {
   return `${kind}-${counter}`;
 }
 
+// Square-tile layout for a canonical code family at a distance, so selecting a
+// code DRAWS it on the canvas (a visual "constructor") instead of an empty grid.
+// repetition is a 1xd row; the surface/toric families are a dxd data patch.
+export function templateTiles(family: string, distance: number): Tile[] {
+  const d = Math.max(2, Math.floor(distance));
+  const tiles: Tile[] = [];
+
+  const add = (row: number, col: number): void => {
+    tiles.push({
+      id: freshId("square"),
+      kind: "square",
+      row,
+      col,
+      rotation: 0,
+    });
+  };
+
+  if (family === "repetition") {
+    for (let c = 0; c < d; c++) {
+      add(0, c);
+    }
+
+    return tiles;
+  }
+
+  for (let r = 0; r < d; r++) {
+    for (let c = 0; c < d; c++) {
+      add(r, c);
+    }
+  }
+
+  return tiles;
+}
+
 // Grid (col, row) -> pixel centre.
 export function gridToPixel(row: number, col: number): Point {
   return { x: ORIGIN.x + col * CELL, y: ORIGIN.y + row * CELL };
@@ -157,6 +191,21 @@ export function normalizeRect(a: Point, b: Point): Rect {
   };
 }
 
+// A drawn link between two edge-adjacent tile centres (for the canvas overlay).
+export interface Link {
+  a: Point;
+  b: Point;
+}
+
+// Live summary of the drawn lattice, shown in the canvas HUD + control panel.
+export interface CanvasStats {
+  count: number; // tiles placed
+  groups: number; // connected components (edge adjacency)
+  rows: number; // bounding-box height in cells
+  cols: number; // bounding-box width in cells
+  kinds: Record<TileKind, number>;
+}
+
 export class CanvasModel {
   tiles: Tile[] = [];
   selected: Set<string> = new Set();
@@ -264,16 +313,117 @@ export class CanvasModel {
   }
 
   // Marquee select: every tile whose bounding box overlaps the rectangle.
-  selectInRect(marquee: Rect, additive = false): void {
-    if (!additive) {
-      this.selected.clear();
-    }
+  // `base` (when given) is the selection to start from, so a live marquee can be
+  // re-evaluated every pointer move without losing a prior additive selection.
+  selectInRect(marquee: Rect, additive = false, base?: Set<string>): void {
+    this.selected = additive && base ? new Set(base) : new Set();
 
     for (const t of this.tiles) {
       if (rectIntersects(bbox(tilePolygon(t)), marquee)) {
         this.selected.add(t.id);
       }
     }
+  }
+
+  // Edge-adjacent tile pairs (|Δrow|+|Δcol| == 1), as centre-to-centre links for
+  // the canvas overlay so the user can see which tiles actually touch.
+  links(): Link[] {
+    const at = new Map<string, Tile>();
+
+    for (const t of this.tiles) {
+      at.set(`${t.row},${t.col}`, t);
+    }
+
+    const out: Link[] = [];
+
+    for (const t of this.tiles) {
+      // only +row / +col neighbours, so each pair is emitted once.
+      for (const [dr, dc] of [
+        [1, 0],
+        [0, 1],
+      ]) {
+        const n = at.get(`${t.row + dr},${t.col + dc}`);
+
+        if (n !== undefined) {
+          out.push({ a: gridToPixel(t.row, t.col), b: gridToPixel(n.row, n.col) });
+        }
+      }
+    }
+
+    return out;
+  }
+
+  // Tile count, connected-component count (edge adjacency), bounding box, and a
+  // per-kind tally. Drives the live "Surface" readout.
+  stats(): CanvasStats {
+    const kinds: Record<TileKind, number> = {
+      square: 0,
+      tri: 0,
+      hex: 0,
+    };
+
+    for (const t of this.tiles) {
+      kinds[t.kind] += 1;
+    }
+
+    if (this.tiles.length === 0) {
+      return {
+        count: 0,
+        groups: 0,
+        rows: 0,
+        cols: 0,
+        kinds,
+      };
+    }
+
+    const rowsSeen = this.tiles.map((t) => t.row);
+    const colsSeen = this.tiles.map((t) => t.col);
+
+    // connected components over occupied cells via flood fill (edge adjacency).
+    const occupied = new Set(this.tiles.map((t) => `${t.row},${t.col}`));
+    const seen = new Set<string>();
+    let groups = 0;
+
+    for (const cell of occupied) {
+      if (seen.has(cell)) {
+        continue;
+      }
+
+      groups += 1;
+      const stack = [cell];
+
+      while (stack.length > 0) {
+        const cur = stack.pop() as string;
+
+        if (seen.has(cur)) {
+          continue;
+        }
+
+        seen.add(cur);
+        const [r, c] = cur.split(",").map(Number);
+
+        for (const [dr, dc] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ]) {
+          const k = `${r + dr},${c + dc}`;
+
+          if (occupied.has(k) && !seen.has(k)) {
+            stack.push(k);
+          }
+        }
+      }
+    }
+
+    return {
+      count: this.tiles.length,
+      groups,
+      rows: Math.max(...rowsSeen) - Math.min(...rowsSeen) + 1,
+      cols: Math.max(...colsSeen) - Math.min(...colsSeen) + 1,
+      kinds,
+    };
   }
 
   private selectedTiles(): Tile[] {
@@ -360,6 +510,26 @@ export class CanvasModel {
       observables: [],
       boundary: this.boundary,
     };
+  }
+
+  // Replace the canvas with a canonical code's drawn tiles (a visual construct
+  // of the selected family/distance). The run still uses the template path; this
+  // is the "code constructor" view that's shown for every selected code.
+  loadTemplate(family: string, distance: number): void {
+    this.pushHistory();
+    this.tiles = templateTiles(family, distance);
+    this.boundary = family === "toric" ? "periodic" : "open";
+    this.selected.clear();
+  }
+
+  clear(): void {
+    if (this.tiles.length === 0) {
+      return;
+    }
+
+    this.pushHistory();
+    this.tiles = [];
+    this.selected.clear();
   }
 
   fromSpec(spec: LatticeSpec): void {
