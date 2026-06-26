@@ -7,10 +7,27 @@
   "scripts": {
     "dev": "vitepress dev",
     "build": "vitepress build",
-    "deploy": "npx -y gh-pages -dj docs/.vitepress/dist"
+    "preview": "vitepress preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "smoke": "node test/smoke.mjs",
+    "interact": "node test/interact.mjs",
+    "deploy": "npx -y gh-pages -d .vitepress/dist -t"
   },
   "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^4.0.0",
+    "@tsconfig/svelte": "^5.0.0",
+    "@types/katex": "^0.16.7",
+    "@types/three": "^0.169.0",
     "markdown-it-mathjax3": "^4.3.2",
+    "puppeteer": "^25.1.0",
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "typescript": "^5.6.0",
     "vitepress": "^1.6.3"
+  },
+  "dependencies": {
+    "katex": "^0.16.11",
+    "three": "^0.169.0",
+    "uplot": "^1.6.31"
   }
 }

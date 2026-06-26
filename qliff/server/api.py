@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
@@ -223,21 +224,25 @@ async def run_stream(ws: WebSocket) -> None:
 
         return
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
     def on_point(point) -> None:
         # called from the worker thread; hop back onto the event loop.
         loop.call_soon_threadsafe(queue.put_nowait, point)
 
-    async def drive() -> None:
+    def worker() -> None:
+        # the blocking sweep runs here, off the event loop. A *daemon* thread (not
+        # the default executor) so a Ctrl-C mid-sweep abandons it instantly instead
+        # of the interpreter joining it at exit -- which would stall shutdown until
+        # the whole sweep finished.
         try:
-            await loop.run_in_executor(None, lambda: run_sweep(req, on_point))
+            run_sweep(req, on_point)
             loop.call_soon_threadsafe(queue.put_nowait, _DONE)
         except Exception as exc:  # surface engine errors to the client.
             loop.call_soon_threadsafe(queue.put_nowait, _Err(str(exc)))
 
-    task = asyncio.ensure_future(drive())
+    threading.Thread(target=worker, daemon=True).start()
     try:
         while True:
             item = await queue.get()
@@ -251,7 +256,6 @@ async def run_stream(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        task.cancel()
         # the client may already be gone; closing twice is harmless to ignore.
         try:
             await ws.close()

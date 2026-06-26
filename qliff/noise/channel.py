@@ -151,7 +151,7 @@ class AmplitudeDamping(Channel):
         q_Z = [(1-p)-sqrt(1-p)]/2 (<0),
         q_R = p.
 
-    gamma ~ 3p/4
+    gamma = sum|q_k| = sqrt(1-p) + p  (~ 1 + p/2 for small p; peaks at 1.25 near p=3/4).
     """
 
     is_pauli = False

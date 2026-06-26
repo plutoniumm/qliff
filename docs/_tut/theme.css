@@ -1,0 +1,362 @@
+/* qliff explainers -- one minimal theme shared by every explainer. Everything is
+   scoped under `.qtut` (the island wrapper that ../.vitepress/theme/SvelteIsland
+   mounts each explainer into) so the dark explainer surface, control styling and
+   `.prose` typography stay INSIDE the interactive pane and never leak onto the
+   surrounding VitePress chrome or the other docs pages. Components reach for these
+   tokens / .prose / shared classes rather than reinventing styles, so the pages
+   stay visually identical. */
+
+.qtut {
+  /* SURFACES + INK map onto VitePress' own tokens, so the explainer follows the
+     docs' light/dark toggle and sits on the same backgrounds as the prose pages.
+     (--vp-c-* are defined by the default theme: bg/bg-soft/bg-alt/bg-elv,
+     text-1/2/3, divider/border.) */
+  --bg: var(--vp-c-bg);
+  --bg-2: var(--vp-c-bg-soft);
+  --panel: var(--vp-c-bg-soft);
+  --panel-2: var(--vp-c-bg-alt);
+  --panel-solid: var(--vp-c-bg-elv);
+  --line: var(--vp-c-divider);
+  --line-strong: var(--vp-c-border);
+
+  --fg: var(--vp-c-text-1);
+  --muted: var(--vp-c-text-2);
+  --faint: var(--vp-c-text-3);
+
+  /* ACCENTS + DOMAIN colors are the explainers' visual language (decoder purple,
+     Pauli X/Z, success/failure...). Kept saturated so SVG/canvas marks read on
+     either background; light-mode tweaks for the few that need contrast are in the
+     `:where(:root:not(.dark)) .qtut` block below. */
+  --accent: #8b6cff;
+  --accent-2: #4cc9f0;
+  --accent-3: #ff5d8f;
+  --ink-on-accent: #0a0b16;
+  --grad-soft: linear-gradient(125deg,
+      color-mix(in srgb, var(--accent-2) 22%, transparent),
+      color-mix(in srgb, var(--accent) 22%, transparent),
+      color-mix(in srgb, var(--accent-3) 22%, transparent));
+
+  --x: #ff5d8f;
+  --z: #4cc9f0;
+  --y: #ffd166;
+  --ok: #5be8b0;
+  --bad: #ff6b6b;
+  --defect: #ffd166;
+  --data: var(--vp-c-text-3);
+
+  /* geometry */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --col: 760px;       /* prose measure */
+
+  /* type */
+  --font-ui: var(--vp-font-family-base, system-ui, -apple-system, "Segoe UI", Roboto, Inter, sans-serif);
+  --font-mono: var(--vp-font-family-mono, ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace);
+
+  /* motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 130ms;
+  --dur: 240ms;
+
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+
+  /* flush with the surrounding doc -- no separate pane background */
+  color: var(--fg);
+}
+
+/* Light-mode contrast tweaks: the neon cyan/yellow are fine on dark but wash out
+   on white, so darken them a touch when the docs are in light mode. Domain hues
+   stay recognizable; only lightness shifts. */
+:root:not(.dark) .qtut {
+  --z: #1f9fcf;
+  --accent-2: #1f9fcf;
+  --y: #c98a00;
+  --defect: #c98a00;
+  --ok: #1aa06a;
+  --bad: #e03a3a;
+}
+
+.qtut,
+.qtut * {
+  box-sizing: border-box;
+}
+
+.qtut ::selection {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.qtut * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.qtut *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.qtut *::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.qtut a {
+  color: var(--accent-2);
+  text-decoration: none;
+}
+
+.qtut a:hover {
+  text-decoration: underline;
+}
+
+.qtut :is(.mono, input[type="number"], code, kbd) {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.qtut :focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* --- controls --- */
+
+.qtut button {
+  font: inherit;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 7px 13px;
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.qtut button:hover {
+  border-color: var(--line-strong);
+  transform: translateY(-1px);
+}
+
+.qtut button:active {
+  transform: translateY(0) scale(0.985);
+}
+
+.qtut button.active,
+.qtut button.primary {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: var(--grad-soft);
+}
+
+.qtut :is(input, select, textarea) {
+  font: inherit;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--bg-2) 70%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 6px 9px;
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.qtut :is(input, select, textarea):focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.qtut input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: auto;
+}
+
+.qtut input[type="range"] {
+  accent-color: var(--accent);
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+/* --- shared utilities --- */
+
+.qtut .glass {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--vp-c-text-1) 7%, transparent);
+}
+
+/* --- the article column: every explainer's prose lives in .prose so the pages
+   share typography, tables, code, figures. Interactive panels can break out wider
+   with .wide (see lib/Section.svelte). --- */
+
+.qtut .prose {
+  max-width: var(--col);
+  margin: 0 auto;
+  line-height: 1.65;
+  font-size: 16.5px;
+  color: var(--fg);
+}
+
+.qtut .prose p {
+  margin: 0 0 1.05em;
+  color: color-mix(in srgb, var(--fg) 92%, var(--muted));
+}
+
+.qtut .prose h2 {
+  font-size: 26px;
+  line-height: 1.2;
+  margin: 0 0 0.3em;
+  letter-spacing: -0.01em;
+}
+
+.qtut .prose h3 {
+  font-size: 19px;
+  margin: 1.8em 0 0.5em;
+  letter-spacing: -0.005em;
+}
+
+.qtut .prose ul,
+.qtut .prose ol {
+  margin: 0 0 1.05em;
+  padding-left: 1.3em;
+}
+
+.qtut .prose li {
+  margin: 0.3em 0;
+}
+
+.qtut .prose strong {
+  color: var(--fg);
+  font-weight: 650;
+}
+
+.qtut .prose code {
+  font-size: 0.88em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid var(--line);
+}
+
+.qtut .prose pre {
+  margin: 0 0 1.2em;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg-2) 80%, transparent);
+  overflow-x: auto;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.qtut .prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.qtut .prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1.3em;
+  font-size: 14.5px;
+}
+
+.qtut .prose th,
+.qtut .prose td {
+  text-align: left;
+  padding: 8px 11px;
+  border-bottom: 1px solid var(--line);
+}
+
+.qtut .prose th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.qtut .prose tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+/* --- visualizations stay inside their frame and within one screen. Every SVG
+   here is viewBox-based, so width:100% + height:auto scales it down cleanly and
+   prevents a too-tall / too-wide vis from breaking out of the viewport. The
+   max-height here is only a SAFETY NET: it is kept at single-class specificity so
+   a component's own scoped `max-height` (e.g. .plot/.fg) always wins and sets the
+   real, tighter budget. --- */
+/* `:where(.qtut)` scopes these to the island WITHOUT adding specificity, so the
+   safety-net cap stays at the original (0,1,1) -- a component's own scoped
+   `.plot`/`.fg` max-height (0,2,0) still wins and sets the real, tighter budget.
+   Prefixing with a plain `.qtut ` would make it (0,2,1) and override every
+   component cap (the documented regression). */
+:where(.qtut) .frame :is(svg, canvas, img) {
+  max-width: 100%;
+}
+
+:where(.qtut) .frame svg {
+  height: auto;
+  max-height: 62vh;
+  display: block;
+}
+
+:where(.qtut) .frame canvas {
+  max-height: 62vh;
+}
+
+.qtut .prose figure {
+  margin: 1.6em 0;
+}
+
+.qtut .prose figcaption {
+  margin-top: 0.7em;
+  font-size: 13px;
+  color: var(--faint);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.qtut .prose blockquote {
+  margin: 1.3em 0;
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  color: var(--muted);
+}
+
+.qtut .prose hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 2.4em 0;
+}
+
+.qtut .prose .katex {
+  font-size: 1.04em;
+}
+
+.qtut .prose .katex-display {
+  margin: 1.2em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .qtut *,
+  .qtut *::before,
+  .qtut *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

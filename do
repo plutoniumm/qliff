@@ -258,11 +258,17 @@ lint() {
     if [ -d studio/src ]; then
       eastwood studio/src                       # studio frontend (ts + svelte)
     fi
+    if [ -d docs/_tut ]; then
+      eastwood docs/_tut                        # docs tutorials explainers (ts + svelte)
+    fi
   fi
 
-  # svelte type-check, when the studio toolchain is installed.
+  # svelte type-check, when each frontend toolchain is installed.
   if [ -d studio/node_modules ]; then
     (cd studio && npx --no-install svelte-check --tsconfig ./tsconfig.json)
+  fi
+  if [ -d docs/node_modules ]; then
+    (cd docs && npx --no-install svelte-check --tsconfig ./tsconfig.json)
   fi
 }
 
@@ -276,7 +282,14 @@ docs() {
       ;;
     build)
       has npm
-      npm run build
+      npm run build   # vitepress build (Svelte explainers mount as islands in the routes)
+      # Smoke the built tutorial routes in a real Chromium (white-screen / reactive
+      # loop guard), mirroring `./do studio`. Skipped when puppeteer is absent.
+      if [ -d "$ROOT/docs/node_modules/puppeteer" ]; then
+        node test/smoke.mjs
+      else
+        echo ">> tutorials smoke skipped (puppeteer not installed)" >&2
+      fi
       ;;
     test)
       MDR_OUT="$ROOT/docs/tests" test_

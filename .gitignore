@@ -15,9 +15,6 @@ qliff/server/static/
 studio/node_modules/
 studio/dist/
 
-# interactive teaching site (local only, not part of the package)
-/app/
-
 **/_reports/
 
 .token.env
@@ -26,7 +23,6 @@ studio/dist/
 /base/
 
 .DS_Store
-docs/.vitepress
 .claude/
 
 .ruff_cache/

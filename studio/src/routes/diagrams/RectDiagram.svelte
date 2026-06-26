@@ -38,17 +38,16 @@
     { value: "odd", label: "Odd boundary" },
   ];
 
-  // X/Z stabilizer colours, a subset of the color-code A/B/C palette so the
-  // three diagrams share a hue language (Z = cyan, X = magenta, XZZX = amber).
+  // X/Z stabilizer colours, a subset of the color-code A/B/C palette so the three
+  // diagrams share a hue language (Z = blue, X = red). XZZX reuses the same two: each
+  // plaquette is a conic pinwheel of X (red) / Z (blue) corner wedges.
   let colors = $state({
     Z: "#4cc9f0",
     X: "#ff5d8f",
-    XZZX: "#ffb703",
   });
 
   function colorOf(type: FaceType | undefined): string {
     if (type === "X") return colors.X;
-    if (type === "XZZX") return colors.XZZX;
 
     return colors.Z;
   }
@@ -108,9 +107,6 @@
       <legend>Stabilizer colors</legend>
       <label class="color">Z<input type="color" bind:value={colors.Z} /></label>
       <label class="color">X<input type="color" bind:value={colors.X} /></label>
-      {#if pattern === "xzzx"}
-        <label class="color">XZZX<input type="color" bind:value={colors.XZZX} /></label>
-      {/if}
     </fieldset>
   </aside>
 
@@ -129,23 +125,49 @@
           />
         {/each}
       {/if}
-      <!-- plaquettes -->
+      <!-- plaquettes: CSS faces are one flat X/Z tile; XZZX faces are a conic
+           pinwheel of four corner wedges (red X / blue Z) showing the mixed check. -->
       {#if showFaces}
         {#each lattice.stabilizers as s (s.id)}
-          <rect
-            class="diagram-face"
-            x={s.x}
-            y={s.y}
-            width={cellSize}
-            height={cellSize}
-            fill={colorOf(s.type)}
-            fill-opacity="0.28"
-            stroke={colorOf(s.type)}
-            stroke-width="1.5"
-          />
+          {#if s.wedges}
+            {#each s.wedges as w, i (`${s.id}-w${i}`)}
+              <path
+                class="diagram-face"
+                d={w.path}
+                fill={colorOf(w.pauli)}
+                fill-opacity="0.4"
+                stroke="var(--bg)"
+                stroke-width="0.75"
+              />
+            {/each}
+            <rect
+              x={s.x}
+              y={s.y}
+              width={cellSize}
+              height={cellSize}
+              fill="none"
+              stroke={colorOf("X")}
+              stroke-opacity="0.4"
+              stroke-width="1"
+            />
+          {:else}
+            <rect
+              class="diagram-face"
+              x={s.x}
+              y={s.y}
+              width={cellSize}
+              height={cellSize}
+              fill={colorOf(s.type)}
+              fill-opacity="0.28"
+              stroke={colorOf(s.type)}
+              stroke-width="1.5"
+            />
+          {/if}
         {/each}
       {/if}
-      {#if showLabels}
+      <!-- CSS plaquettes carry one X/Z glyph each; XZZX puts its structure on the
+           qubits instead (see the per-qubit labels below), so skip the face glyph. -->
+      {#if showLabels && pattern !== "xzzx"}
         {#each lattice.stabilizers as s (`l-${s.id}`)}
           <text
             x={s.x + cellSize / 2}
@@ -161,6 +183,21 @@
       {#if showQubits}
         {#each lattice.qubits as q (q.id)}
           <circle class="diagram-qubit" cx={q.x} cy={q.y} r={cellSize * 0.09} fill="var(--fg)" />
+        {/each}
+      {/if}
+      <!-- XZZX: every plaquette is X-Z-Z-X, so the X/Z lives on each data qubit.
+           Small per-qubit labels, colour-coded, keep the dense pattern readable. -->
+      {#if showLabels && pattern === "xzzx"}
+        {#each lattice.qubits as q (`p-${q.id}`)}
+          <text
+            x={q.x}
+            y={q.y - cellSize * 0.18}
+            text-anchor="middle"
+            dominant-baseline="central"
+            font-size={cellSize * 0.2}
+            font-weight="700"
+            fill={colorOf(q.pauli)}
+          >{q.pauli}</text>
         {/each}
       {/if}
     </g>
