@@ -5,6 +5,9 @@ import threading
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
+from ..noise.channel import CHANNEL_META
+from ..qec.decoder import DECODER_SPECS
+from ..qec.registry import FAMILIES
 from .run import compile_summary, run_sweep
 from .schema import (
     ChannelInfo,
@@ -18,141 +21,49 @@ from .schema import (
 
 router = APIRouter()
 
-# Canonical families the UI can offer. repetition/surface codes are graphlike
-# (MWPM default); BP+OSD, MLD and TN are offered everywhere as denser fallbacks.
-# `coherent` is offered separately (see /api/decoders) for non-Pauli channels.
-_PAULI_DECODERS = ["mwpm", "bposd", "mld", "tn"]
-# Stabiliser-pattern options the surface families offer along each axis. Rotated
-# supports all three (pattern x start x edge = 8 variants); unrotated has no
-# alternate boundary set so it omits `edge` (pattern x start = 4). repetition/toric
-# expose none (a single option per axis => no selector).
+# The three /api metadata payloads are DERIVED from the single registries so they can
+# never drift from the engine: families from qliff.qec.registry (label / min distance
+# / offered decoders / stabiliser-pattern axes), decoders from the decoder registry
+# (label / Pauli-only capability / note), and channels from noise.channel.CHANNEL_META
+# (label / arg shape / Pauli-ness). Adding a family/decoder/channel to its registry
+# lights it up here automatically.
 _TEMPLATES = [
     TemplateInfo(
-        family="repetition",
-        label="Repetition code",
-        min_distance=2,
-        decoders=_PAULI_DECODERS,
-    ),
-    TemplateInfo(
-        family="rotated_surface",
-        label="Rotated surface code",
-        min_distance=2,
-        decoders=_PAULI_DECODERS,
-        patterns=["css", "xzzx"],
-        starts=["Z", "X"],
-        edges=["even", "odd"],
-    ),
-    TemplateInfo(
-        family="unrotated_surface",
-        label="Unrotated surface code",
-        min_distance=2,
-        decoders=_PAULI_DECODERS,
-        patterns=["css", "xzzx"],
-        starts=["Z", "X"],
-        edges=["even"],
-    ),
-    TemplateInfo(
-        family="toric",
-        label="Toric code",
-        min_distance=2,
-        decoders=_PAULI_DECODERS,
-    ),
+        family=fam.name,
+        label=fam.label,
+        min_distance=fam.min_distance,
+        decoders=list(fam.default_decoders),
+        **{axis: list(opts) for axis, opts in fam.variant_axes.items()},
+    )
+    for fam in FAMILIES.values()
 ]
 
-# Every decoder the UI can offer, with whether it honestly decodes only Pauli
-# noise (DEM-backed) -- coherent/non-Pauli channels need the `coherent` decoder.
 _DECODERS = [
     DecoderInfo(
-        name="mwpm",
-        label="MWPM",
-        pauli_only=True,
-        note="minimum-weight perfect matching (graphlike)",
-    ),
-    DecoderInfo(
-        name="bposd",
-        label="BP+OSD",
-        pauli_only=True,
-        note="belief propagation + ordered-statistics decoding",
-    ),
-    DecoderInfo(
-        name="mld",
-        label="MLD",
-        pauli_only=False,
-        note="exact max-likelihood TN (Pauli + coherent)",
-    ),
-    DecoderInfo(
-        name="tn",
-        label="TN",
-        pauli_only=False,
-        note="tensor-network max-likelihood (Pauli + coherent)",
-    ),
-    DecoderInfo(
-        name="coherent",
-        label="Coherent",
-        pauli_only=False,
-        note="non-Pauli/coherent TN",
-    ),
+        name=spec.name,
+        label=spec.label,
+        pauli_only=spec.pauli_only,
+        note=spec.note,
+    )
+    for spec in DECODER_SPECS.values()
 ]
 
-# Every noise channel the UI can offer. `arg` is the strength shape ("p" scalar,
-# "theta" rotation angle, "vec3" Pauli rates); non-Pauli channels need coherent.
+# UI hint shown beside the coherent rotations; every other channel fact (label, arg
+# shape, Pauli-ness) reads straight from CHANNEL_META, so it cannot duplicate-drift.
+_CHANNEL_NOTES = {
+    "RZ": "coherent",
+    "RX": "coherent",
+}
+
 _CHANNELS = [
     ChannelInfo(
-        name="DEPOLARIZE1",
-        label="Depolarizing (1Q)",
-        is_pauli=True,
-        arg="p",
-        note="",
-    ),
-    ChannelInfo(
-        name="DEPOLARIZE2",
-        label="Depolarizing (2Q)",
-        is_pauli=True,
-        arg="p",
-        note="",
-    ),
-    ChannelInfo(
-        name="X_ERROR",
-        label="Bit flip (X)",
-        is_pauli=True,
-        arg="p",
-        note="",
-    ),
-    ChannelInfo(
-        name="Z_ERROR",
-        label="Phase flip (Z)",
-        is_pauli=True,
-        arg="p",
-        note="",
-    ),
-    ChannelInfo(
-        name="PAULI_CHANNEL_1",
-        label="Pauli channel (1Q)",
-        is_pauli=True,
-        arg="vec3",
-        note="",
-    ),
-    ChannelInfo(
-        name="RZ",
-        label="Z rotation",
-        is_pauli=False,
-        arg="theta",
-        note="coherent",
-    ),
-    ChannelInfo(
-        name="RX",
-        label="X rotation",
-        is_pauli=False,
-        arg="theta",
-        note="coherent",
-    ),
-    ChannelInfo(
-        name="AMPLITUDE_DAMP",
-        label="Amplitude damping",
-        is_pauli=False,
-        arg="p",
-        note="",
-    ),
+        name=name,
+        label=meta.label,
+        is_pauli=meta.is_pauli,
+        arg=meta.arg_shape,
+        note=_CHANNEL_NOTES.get(name, ""),
+    )
+    for name, meta in CHANNEL_META.items()
 ]
 
 

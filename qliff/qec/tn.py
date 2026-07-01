@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from .decoder import BatchDecoder
 from .dem import DetectorErrorModel
 
 # Tensor-network primitives + a maximum-likelihood (MLD) decoder.
@@ -190,14 +191,16 @@ def parity(degree: int, target: int, dtype=float) -> np.ndarray:
     return t
 
 
-def _dleg(m: int, d: int) -> tuple:
-    # leg joining mechanism m's copy tensor to detector d's parity constraint.
-    return ("d", m, d)
+def _dleg(i: int, d: int) -> tuple:
+    # leg joining source i (a mechanism, or a noise location) to detector d's
+    # parity constraint.
+    return ("d", i, d)
 
 
-def _oleg(m: int, o: int) -> tuple:
-    # leg joining mechanism m's copy tensor to observable o's parity tensor.
-    return ("o", m, o)
+def _oleg(i: int, o: int) -> tuple:
+    # leg joining source i (a mechanism, or a noise location) to observable o's
+    # parity tensor.
+    return ("o", i, o)
 
 
 def _obs_out(o: int) -> tuple:
@@ -205,47 +208,123 @@ def _obs_out(o: int) -> tuple:
     return ("obs", o)
 
 
-class MaxLikelihoodDecoder:
+class TensorNetworkDecoder(BatchDecoder):
+    """
+    Shared base for the factor-graph tensor-network decoders. Each builds a network
+    of one variable tensor per error SOURCE (a DEM mechanism, or a circuit noise
+    location) plus one parity tensor per observable; per shot it pins the detector
+    legs to the syndrome and contracts to the total weight of each logical class,
+    argmaxing the (real part of the) weight. MaxLikelihoodDecoder is the Pauli
+    special case -- real, non-negative probabilities -- and CoherentDecoder is the
+    general case of signed / complex quasiprobabilities; the caching decode loop and
+    per-shot contraction are identical, so they live here. Subclasses set `_dtype`
+    (float64 or complex), `max_bond`, the detector incidence `_det_incidence`, and
+    `_build_static`.
+    """
+
+    num_detectors: int
+    num_observables: int
+    max_bond: int | None = None
+    _dtype: type = float
+
+    def _init_network(self) -> None:
+        # call once the subclass has set its shape, `_dtype`, `_det_incidence`, and
+        # whatever `_build_static` reads. Static tensors are syndrome-independent;
+        # per shot only the detector tensors change, so memoize the decoded result
+        # per distinct syndrome (the all-zero syndrome dominates at low p).
+        self._static = self._build_static()
+        self._open = [_obs_out(o) for o in range(self.num_observables)]
+        self._cache: dict = {}
+
+    def _build_static(self) -> list[Tensor]:
+        """
+        Syndrome-independent tensors: the source variables plus one open-legged
+        observable parity tensor per observable.
+        """
+        raise NotImplementedError
+
+    def _detector_tensors(self, syndrome: np.ndarray) -> list[Tensor]:
+        tensors: list[Tensor] = []
+
+        for d in range(self.num_detectors):
+            legs = [_dleg(i, d) for i in self._det_incidence[d]]
+            target = int(syndrome[d])
+            tensors.append(Tensor(parity(len(legs), target, dtype=self._dtype), tuple(legs)))
+
+        return tensors
+
+    def _decode_one(self, syndrome: np.ndarray) -> np.ndarray:
+        tensors = self._static + self._detector_tensors(syndrome)
+        weights = contract(tensors, self._open, max_bond=self.max_bond).data
+        # signed / complex branch weights sum to a per-class total that is real up to
+        # round-off; np.real is a no-op for the float MLD dtype. argmax the real
+        # weight -- the most-likely logical class.
+        flat = np.real(np.asarray(weights).reshape(-1))
+
+        if not np.any(flat > 0.0):
+            # impossible syndrome under the model: default to no logical flip.
+            return np.zeros(self.num_observables, dtype=np.uint8)
+
+        best = int(np.argmax(flat))
+        bits = np.unravel_index(best, (2,) * self.num_observables)
+
+        return np.array(bits, dtype=np.uint8)
+
+    def _decode_nonempty(self, det: np.ndarray) -> np.ndarray:
+        shots = det.shape[0]
+        preds = np.zeros((shots, self.num_observables), dtype=np.uint8)
+
+        for s in range(shots):
+            key = det[s].tobytes()
+            hit = self._cache.get(key)
+
+            if hit is None:
+                hit = self._decode_one(det[s])
+                self._cache[key] = hit
+
+            preds[s] = hit
+
+        return preds
+
+
+class MaxLikelihoodDecoder(TensorNetworkDecoder):
     """
     Exact maximum-likelihood decoder via factor-graph tensor contraction over a
-    DetectorErrorModel. Optimal on the DEM (>= MWPM/BP+OSD accuracy); cost grows
-    with the network's treewidth, so it is the reference / small-to-mid-distance
-    decoder. Registered as "mld" (and "tn"). Passing `max_bond=chi` caps the
-    contraction's bond dimension via truncated SVD so it scales past small
-    distances; `max_bond=None` (default) is the exact contraction.
+    DetectorErrorModel: the Pauli special case of TensorNetworkDecoder, where every
+    source is a mechanism carrying a real probability [1-p, p]. Optimal on the DEM
+    (>= MWPM/BP+OSD accuracy); cost grows with the network's treewidth, so it is the
+    reference / small-to-mid-distance decoder. Registered as "mld" (and "tn").
+    Passing `max_bond=chi` caps the contraction's bond dimension via truncated SVD so
+    it scales past small distances; `max_bond=None` (default) is the exact
+    contraction.
     """
 
     def __init__(self, dem: DetectorErrorModel, max_bond: int | None = None):
         self.num_observables = dem.num_observables
         self.num_detectors = dem.num_detectors
         self.max_bond = max_bond
+        self._dtype = float
 
         self._priors = [p for p, _d, _o in dem.mechanisms]
         self._mech_dets = [sorted(dets) for _p, dets, _o in dem.mechanisms]
         self._mech_obs = [sorted(obs) for _p, _d, obs in dem.mechanisms]
 
         # incidence: which mechanisms touch each detector / observable.
-        self._det_mechs = [[] for _ in range(self.num_detectors)]
+        self._det_incidence = [[] for _ in range(self.num_detectors)]
         self._obs_mechs = [[] for _ in range(self.num_observables)]
 
         for m, dets in enumerate(self._mech_dets):
             for d in dets:
-                self._det_mechs[d].append(m)
+                self._det_incidence[d].append(m)
 
         for m, obs in enumerate(self._mech_obs):
             for o in obs:
                 self._obs_mechs[o].append(m)
 
-        # static tensors (syndrome-independent): one biased COPY per mechanism +
-        # one parity tensor per observable (with its open leg).
-        self._static = self._build_static()
-
-        # per-shot only the detector tensors change; memoize the decoded result
-        # per distinct syndrome (the all-zero syndrome dominates at low p).
-        self._open = [_obs_out(o) for o in range(self.num_observables)]
-        self._cache: dict = {}
+        self._init_network()
 
     def _build_static(self) -> list[Tensor]:
+        # one biased COPY per mechanism + one parity tensor per observable (open leg).
         tensors: list[Tensor] = []
 
         for m, p in enumerate(self._priors):
@@ -264,47 +343,3 @@ class MaxLikelihoodDecoder:
             tensors.append(Tensor(parity(len(legs), 0), tuple(legs)))
 
         return tensors
-
-    def _detector_tensors(self, syndrome: np.ndarray) -> list[Tensor]:
-        tensors: list[Tensor] = []
-
-        for d in range(self.num_detectors):
-            mechs = self._det_mechs[d]
-            legs = [_dleg(m, d) for m in mechs]
-            tensors.append(Tensor(parity(len(legs), int(syndrome[d])), tuple(legs)))
-
-        return tensors
-
-    def _decode_one(self, syndrome: np.ndarray) -> np.ndarray:
-        tensors = self._static + self._detector_tensors(syndrome)
-        weights = contract(tensors, self._open, max_bond=self.max_bond).data
-        flat = np.asarray(weights).reshape(-1)
-
-        if not np.any(flat > 0.0):
-            # impossible syndrome under the model: default to no logical flip.
-            return np.zeros(self.num_observables, dtype=np.uint8)
-
-        best = int(np.argmax(flat))
-        bits = np.unravel_index(best, (2,) * self.num_observables)
-
-        return np.array(bits, dtype=np.uint8)
-
-    def decode_batch(self, detection_events: np.ndarray) -> np.ndarray:
-        det = np.ascontiguousarray(detection_events, dtype=np.uint8)
-        shots = det.shape[0]
-        preds = np.zeros((shots, self.num_observables), dtype=np.uint8)
-
-        if det.shape[1] == 0 or self.num_observables == 0:
-            return preds
-
-        for s in range(shots):
-            key = det[s].tobytes()
-            hit = self._cache.get(key)
-
-            if hit is None:
-                hit = self._decode_one(det[s])
-                self._cache[key] = hit
-
-            preds[s] = hit
-
-        return preds

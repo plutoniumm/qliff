@@ -166,6 +166,20 @@ class DetectorErrorModel:
 
         return np.log((1.0 - priors) / priors)
 
+    def max_degree(self) -> int:
+        """
+        The most detectors any single fault flips. > 2 means the model has a
+        hyperedge (e.g. a 2-qubit channel like DEPOLARIZE2 on a 2D code), so a
+        graphlike matching decoder (MWPM) cannot represent it.
+        """
+        return max((len(dets) for _p, dets, _obs in self.mechanisms), default=0)
+
+    def is_graphlike(self) -> bool:
+        """
+        Every fault flips <= 2 detectors, so the DEM is a matching graph (MWPM-able).
+        """
+        return self.max_degree() <= 2
+
     def graphlike_edges(self) -> list[tuple]:
         """
         Mechanisms flipping <= 2 detectors as (detectors, observables, weight)

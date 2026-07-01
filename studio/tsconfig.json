@@ -11,7 +11,14 @@
     "moduleResolution": "bundler",
     "strict": true,
     "baseUrl": ".",
-    "paths": { "$lib": ["src/lib"], "$lib/*": ["src/lib/*"] }
+    "paths": {
+      "$lib": ["src/lib"],
+      "$lib/*": ["src/lib/*"],
+      "$shared": ["../shared/qui"],
+      "$shared/*": ["../shared/qui/*"],
+      "uplot": ["node_modules/uplot"],
+      "uplot/*": ["node_modules/uplot/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.svelte", "src/**/*.d.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]

@@ -1,35 +1,78 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from ..circuit import Circuit
-from ..noise.channel import NOISE_FACTORIES
-
-# Two-qubit channels act on target pairs; PAULI_CHANNEL_1 wants a (px, py, pz)
-# vector arg. Everything else is a scalar-arg single-qubit channel on the data.
-_TWO_QUBIT_CHANNELS = {"DEPOLARIZE2"}
-_VECTOR_CHANNELS = {"PAULI_CHANNEL_1"}
+from ..noise.channel import NOISE_FACTORIES, apply_data_noise
 
 
-def _apply_data_noise(c: Circuit, channel: str, num_data: int, p: float) -> None:
+def _emit_z_memory(
+    num_data: int,
+    stabilizers: list[tuple[bool, int, list[tuple[int, str]]]],
+    observables: list[list[tuple[int, str]]],
+    rounds: int,
+    noise_channel: str,
+    p: float,
+    x_frame: Iterable[int] = (),
+    universal_h: bool = False,
+) -> Circuit:
     """
-    Emit the per-round data noise for `channel` at strength p (or theta). 1Q
-    scalar channels hit every data qubit; PAULI_CHANNEL_1 spreads p evenly over
-    (px, py, pz); DEPOLARIZE2 acts on adjacent data pairs.
+    Shared Z-memory syndrome-extraction emitter for every code family (surface,
+    toric, colour, and the XZZX / EVEN-X variants). Each stabilizer is
+    (primary, ancilla, corners) with corners [(data, "X"|"Z")]; checks are emitted
+    in the GIVEN order, so callers put the primary Z-checks first to keep the round
+    detectors graphlike. Only `primary` checks declare round-to-round detectors and
+    seed the boundary detectors after the transversal M. A pure-Z check reads with a
+    bare data->ancilla CX ladder; any other check (a star, or a mixed XZZX face)
+    reads with a |+> ancilla and a per-corner CX / CZ. `universal_h` forces that
+    ancilla-Hadamard form on every check (the non-CSS variants), and `x_frame` lists
+    the data qubits initialised |+> and read back in the X basis.
     """
-    if channel in _VECTOR_CHANNELS:
-        arg = (p / 3.0, p / 3.0, p / 3.0)
-        for q in range(num_data):
-            c.append(channel, [q], arg)
+    c = Circuit()
+    width = len(stabilizers)
 
-        return
+    for q in x_frame:
+        c.append("H", [q])
 
-    if channel in _TWO_QUBIT_CHANNELS:
-        for q in range(0, num_data - 1, 2):
-            c.append(channel, [q, q + 1], p)
+    for r in range(rounds):
+        apply_data_noise(c.append, noise_channel, range(num_data), p)
 
-        return
+        for primary, anc, corners in stabilizers:
+            if not universal_h and all(pauli == "Z" for _q, pauli in corners):
+                for q, _pauli in corners:
+                    c.append("CX", [q, anc])
+            else:
+                c.append("H", [anc])
+                for q, pauli in corners:
+                    if pauli == "X":
+                        c.append("CX", [anc, q])
+                    else:
+                        c.append("CZ", [anc, q])
+                c.append("H", [anc])
+            c.append("MR", [anc])
+            if not primary:
+                continue
+            if r == 0:
+                c.detector(-1)
+            else:
+                c.detector(-1, -1 - width)
 
+    for q in x_frame:
+        c.append("H", [q])
     for q in range(num_data):
-        c.append(channel, [q], p)
+        c.append("M", [q])
+
+    for slot, (primary, _anc, corners) in enumerate(stabilizers):
+        if not primary:
+            continue
+        recs = [-num_data + q for q, _pauli in corners]
+        prev = -num_data - width + slot
+        c.detector(*recs, prev)
+
+    for index, corners in enumerate(observables):
+        c.observable(index, *[-num_data + q for q, _pauli in corners])
+
+    return c
 
 
 def build_circuit(
@@ -50,7 +93,8 @@ def build_circuit(
     boundary Z detectors and the Z-type logical observable(s). X-type observables
     are dropped: a Z-basis readout cannot reconstruct them deterministically.
     `boundary` is patch metadata (open/periodic) -- the stabilizer list already
-    carries the topology, so it only validates here.
+    carries the topology, so it only validates here. Z-checks are grouped first,
+    then emission is delegated to the shared _emit_z_memory.
     """
     if boundary not in ("open", "periodic"):
         raise ValueError(f"boundary must be 'open' or 'periodic', got {boundary!r}")
@@ -60,61 +104,39 @@ def build_circuit(
     z_checks = [(i, q) for i, (k, q) in enumerate(stabilizers) if k.upper() == "Z"]
     x_checks = [(i, q) for i, (k, q) in enumerate(stabilizers) if k.upper() == "X"]
     order = z_checks + x_checks
-    width = len(order)
-    anc_of = {orig: num_data + slot for slot, (orig, _q) in enumerate(order)}
-    c = Circuit()
+    n_z = len(z_checks)
+    stabs = [
+        (slot < n_z, num_data + slot, [(d, "Z" if slot < n_z else "X") for d in touch])
+        for slot, (_orig, touch) in enumerate(order)
+    ]
+    z_observables = [
+        [(d, "Z") for d in support]
+        for kind, support in observables
+        if kind.upper() == "Z"
+    ]
 
-    for r in range(rounds):
-        _apply_data_noise(c, noise_channel, num_data, p)
-
-        for slot, (orig, touch) in enumerate(order):
-            anc = anc_of[orig]
-            is_x = slot >= len(z_checks)
-            if is_x:
-                c.append("H", [anc])
-                for d in touch:
-                    c.append("CX", [anc, d])
-                c.append("H", [anc])
-            else:
-                for d in touch:
-                    c.append("CX", [d, anc])
-            c.append("MR", [anc])
-            if is_x:
-                continue
-            if r == 0:
-                c.detector(-1)
-            else:
-                c.detector(-1, -1 - width)
-
-    for q in range(num_data):
-        c.append("M", [q])
-    for slot, (_orig, touch) in enumerate(z_checks):
-        recs = [-num_data + d for d in touch]
-        prev = -num_data - width + slot
-        c.detector(*recs, prev)
-
-    index = 0
-    for kind, support in observables:
-        if kind.upper() != "Z":
-            continue
-        c.observable(index, *[-num_data + d for d in support])
-        index += 1
-
-    return c
+    return _emit_z_memory(num_data, stabs, z_observables, rounds, noise_channel, p)
 
 
-def _square_patch(rows: int, cols: int) -> tuple[int, list, list]:
+def _rotated_plaquettes(
+    rows: int,
+    cols: int,
+    edge: str = "even",
+) -> list[tuple[str, list[int]]]:
     """
-    Build a rotated-surface-code patch over a `rows` x `cols` data grid: weight-4
-    bulk plaquettes plus weight-2 boundary checks, with a Z column logical and an
-    X row logical. Returns (num_data, stabilizers, observables).
+    Rotated-surface plaquette checkerboard over a rows x cols data grid (data index
+    r*cols+col): weight-4 bulk faces plus the weight-2 boundary faces of the chosen
+    `edge` set. kind is "Z" on the (r+col)-even faces, "X" on the odd ones. The
+    weight-2 keep rule ("even" keeps the column-logical boundary, "odd" its dual) was
+    a past EVEN-X/Z bug surface, so it is preserved exactly. Returns [(kind, touch)]
+    in scan order; callers attach the ancilla / Hadamard recolour / observable.
     """
     data = {}
     for r in range(rows):
         for col in range(cols):
-            data[(r, col)] = len(data)
+            data[(r, col)] = r * cols + col
 
-    stabilizers = []
+    plaq = []
     for r in range(-1, rows):
         for col in range(-1, cols):
             kind = "Z" if (r + col) % 2 == 0 else "X"
@@ -122,16 +144,33 @@ def _square_patch(rows: int, cols: int) -> tuple[int, list, list]:
             touch = sorted(data[d] for d in corners if d in data)
 
             if len(touch) == 4:
-                stabilizers.append((kind, touch))
+                plaq.append((kind, touch))
                 continue
             if len(touch) != 2:
                 continue
 
             on_row = r < 0 or r >= rows - 1
-            keep = (kind == "Z" and on_row) or (kind == "X" and not on_row)
-            if keep:
-                stabilizers.append((kind, touch))
+            keep_even = (on_row and (r + col) % 2 == 0) or (
+                not on_row and (r + col) % 2 == 1
+            )
+            if keep_even == (edge == "even"):
+                plaq.append((kind, touch))
 
+    return plaq
+
+
+def _square_patch(rows: int, cols: int) -> tuple[int, list, list]:
+    """
+    Build a rotated-surface-code patch over a `rows` x `cols` data grid: weight-4
+    bulk plaquettes plus weight-2 boundary checks (via _rotated_plaquettes), with a
+    Z column logical and an X row logical. Returns (num_data, stabilizers, observables).
+    """
+    data = {}
+    for r in range(rows):
+        for col in range(cols):
+            data[(r, col)] = len(data)
+
+    stabilizers = _rotated_plaquettes(rows, cols)
     logical_z = [data[(r, 0)] for r in range(rows)]
     logical_x = [data[(0, col)] for col in range(cols)]
     observables = [("Z", logical_z), ("X", logical_x)]
@@ -143,27 +182,34 @@ def resolve_tiles(
     tiles: list[dict],
 ) -> tuple[int, list[tuple[str, list[int]]], list[tuple[str, list[int]]]]:
     """
-    Map a list of square studio tiles to a rotated-surface-code patch. Each tile
-    {"kind":"square","row":r,"col":c,"rotation":deg} is a unit data site; the
-    bounding box of the tiles sets the patch dimensions. "tri"/"hex" tiles are
-    diagram-only and raise NotImplementedError. Returns
-    (num_data, stabilizers, observables).
+    Map a list of studio tiles to a stabiliser patch from their bounding box. All
+    tiles must share a kind: "square" -> rotated-surface patch; "tri" -> triangular
+    surface code; "hex" -> 6.6.6 honeycomb color code (both on the triangular axes,
+    sized by the bounding box). Returns (num_data, stabilizers, observables).
     """
     if not tiles:
         raise ValueError("resolve_tiles needs at least one tile")
 
-    for tile in tiles:
-        kind = tile.get("kind", "square")
-        if kind in ("tri", "hex"):
-            raise NotImplementedError(
-                f"{kind!r} tiles are diagram-only; no stabilizer mapping yet"
-            )
-        if kind != "square":
-            raise ValueError(f"unknown tile kind {kind!r}")
+    kinds = {tile.get("kind", "square") for tile in tiles}
+    if not kinds <= {"square", "tri", "hex"}:
+        raise ValueError(f"unknown tile kind(s) {sorted(kinds - {'square', 'tri', 'hex'})}")
+    if len(kinds) != 1:
+        raise ValueError(f"mixed tile kinds {sorted(kinds)}; draw one lattice at a time")
 
     rows_seen = [int(tile["row"]) for tile in tiles]
     cols_seen = [int(tile["col"]) for tile in tiles]
     rows = max(rows_seen) - min(rows_seen) + 1
     cols = max(cols_seen) - min(cols_seen) + 1
 
-    return _square_patch(rows, cols)
+    kind = next(iter(kinds))
+    if kind == "square":
+        return _square_patch(rows, cols)
+
+    # tri / hex tiles resolve to the matching triangular-axis family at a distance
+    # set by the drawn extent. Imported lazily: qec.color imports build_circuit from
+    # here, so a top-level import would be circular.
+    from .color import hex_color_layout, triangular_layout
+
+    distance = max(2, max(rows, cols))
+
+    return triangular_layout(distance) if kind == "tri" else hex_color_layout(distance)

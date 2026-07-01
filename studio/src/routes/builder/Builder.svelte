@@ -69,6 +69,33 @@
       starts: ["Z"],
       edges: ["even"],
     },
+    {
+      family: "hex_color",
+      label: "Hexagonal color",
+      min_distance: 3,
+      decoders: ["color", "bposd", "mld", "tn"],
+      patterns: ["css"],
+      starts: ["Z"],
+      edges: ["even"],
+    },
+    {
+      family: "triangular",
+      label: "Triangular",
+      min_distance: 3,
+      decoders: ["color", "bposd", "mld", "tn"],
+      patterns: ["css"],
+      starts: ["Z"],
+      edges: ["even"],
+    },
+    {
+      family: "kagome",
+      label: "Kagome",
+      min_distance: 3,
+      decoders: ["bposd", "mld", "tn"],
+      patterns: ["css"],
+      starts: ["Z"],
+      edges: ["even"],
+    },
   ];
 
   const FALLBACK_CHANNELS: ChannelInfo[] = [
@@ -160,6 +187,12 @@
       label: "Coherent TN",
       pauli_only: false,
       note: "Tensor-network decoder for non-Pauli / coherent noise.",
+    },
+    {
+      name: "color",
+      label: "Color",
+      pauli_only: true,
+      note: "Dedicated color-code decoder (restriction / projection based).",
     },
   ];
 

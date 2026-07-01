@@ -19,8 +19,11 @@ CodeFamily = Literal[
     "rotated_surface",
     "unrotated_surface",
     "toric",
+    "hex_color",
+    "triangular",
+    "kagome",
 ]
-DecoderName = Literal["mwpm", "bposd", "mld", "tn", "coherent"]
+DecoderName = Literal["mwpm", "bposd", "mld", "tn", "coherent", "color"]
 Boundary = Literal["open", "periodic"]
 ChannelArg = Literal["p", "theta", "vec3"]
 # Surface-code stabiliser-pattern knobs (rotated + unrotated families), following the

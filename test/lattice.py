@@ -85,18 +85,52 @@ class ResolveTilesTests(Question):
             msg="logical X commutes with Z-checks",
         )
 
-    def test_tri_hex_not_implemented(self):
+    def test_tri_hex_resolve_to_color_families(self):
         """
-        Triangular and hexagonal tiles are diagram-only and raise.
+        Triangular and hexagonal tiles resolve to their triangular-axis families: a
+        bounding box of tri/hex tiles maps to a valid CSS patch (X and Z stabilizers
+        commute, at least one logical).
         """
         for kind in ("tri", "hex"):
-            tile = {
-                "kind": kind,
-                "row": 0,
-                "col": 0,
-            }
-            with self.assertRaises(NotImplementedError):
-                resolve_tiles([tile])
+            tiles = [
+                {
+                    "kind": kind,
+                    "row": r,
+                    "col": c,
+                }
+                for r in range(3)
+                for c in range(3)
+            ]
+            _n, stabs, obs = resolve_tiles(tiles)
+            xs = [set(s) for t, s in stabs if t == "X"]
+            zs = [set(s) for t, s in stabs if t == "Z"]
+
+            self.assertFalse(
+                any(len(x & z) % 2 for x in xs for z in zs),
+                msg=f"{kind} stabilizers must commute",
+            )
+
+            self.assertTrue(
+                any(t == "Z" for t, _ in obs), msg=f"{kind} patch must encode a logical"
+            )
+
+    def test_mixed_tile_kinds_rejected(self):
+        """
+        A drawing must be a single lattice kind; mixing square and tri/hex raises.
+        """
+        with self.assertRaises(ValueError):
+            resolve_tiles([
+                {
+                    "kind": "square",
+                    "row": 0,
+                    "col": 0,
+                },
+                {
+                    "kind": "tri",
+                    "row": 0,
+                    "col": 1,
+                },
+            ])
 
 
 class BuildCircuitTests(Question):

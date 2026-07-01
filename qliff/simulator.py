@@ -19,6 +19,17 @@ GATE_OPCODE = {
 }
 # fmt: on
 
+# Composite gates lowered to primitive sequences -- one source of truth so a
+# basis-correction fix (e.g. MY = S_DAG;H;M;H;S) lives in one place. Circuit
+# appends these primitives; Simulator runs them on the tableau. "M" is the
+# measuring step (MX/MY collect its record; SX/SX_DAG have none).
+COMPOSITE_GATES = {
+    "SX": ("H", "S", "H"),
+    "SX_DAG": ("H", "S_DAG", "H"),
+    "MX": ("H", "M", "H"),
+    "MY": ("S_DAG", "H", "M", "H", "S"),
+}
+
 
 def _flat(args: tuple) -> list[int]:
     out = []
@@ -121,43 +132,40 @@ class Simulator:
 
     # --- basis measurements / composite gates (sugar over primitives) ---
 
+    def _composite(self, name: str, q: tuple) -> list[int]:
+        # Run a COMPOSITE_GATES primitive sequence per qubit; return the record of
+        # each "M" step (empty for the unitary composites SX/SX_DAG).
+        outs = []
+        for x in _flat(q):
+            for prim in COMPOSITE_GATES[name]:
+                if prim == "M":
+                    outs.append(int(self._t.measure(x, None)))
+                else:
+                    getattr(self._t, prim.lower())(x)
+
+        return outs
+
     def SX(self, *q: int) -> Self:
         # sqrt-X = H S H
-        for x in _flat(q):
-            self._t.h(x)
-            self._t.s(x)
-            self._t.h(x)
+        self._composite("SX", q)
 
         return self
 
     def SX_DAG(self, *q: int) -> Self:
         # sqrt-X dagger = H S_DAG H
-        for x in _flat(q):
-            self._t.h(x)
-            self._t.s_dag(x)
-            self._t.h(x)
+        self._composite("SX_DAG", q)
 
         return self
 
     def MX(self, *q: int) -> int | list[int]:
         # measure in X basis (H; M; H)
-        outs = []
-        for x in _flat(q):
-            self._t.h(x)
-            outs.append(int(self._t.measure(x, None)))
-            self._t.h(x)
+        outs = self._composite("MX", q)
 
         return outs[0] if len(outs) == 1 else outs
 
     def MY(self, *q: int) -> int | list[int]:
         # measure in Y basis (S_DAG; H; M; H; S)
-        outs = []
-        for x in _flat(q):
-            self._t.s_dag(x)
-            self._t.h(x)
-            outs.append(int(self._t.measure(x, None)))
-            self._t.h(x)
-            self._t.s(x)
+        outs = self._composite("MY", q)
 
         return outs[0] if len(outs) == 1 else outs
 

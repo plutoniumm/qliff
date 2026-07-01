@@ -8,8 +8,14 @@ export type CodeFamily =
   | "repetition"
   | "rotated_surface"
   | "unrotated_surface"
-  | "toric";
-export type DecoderName = "mwpm" | "bposd" | "mld" | "tn" | "coherent";
+  | "toric"
+  // Triangular/hex-axis families (color + lattice codes); the builder draws these
+  // on the 60-degree axes rather than the square grid.
+  | "hex_color"
+  | "triangular"
+  | "kagome";
+// `color` is the dedicated color-code decoder (restriction / projection based).
+export type DecoderName = "mwpm" | "bposd" | "mld" | "tn" | "coherent" | "color";
 export type Boundary = "open" | "periodic";
 // Surface-code stabiliser-pattern knobs (rotated + unrotated families), following
 // the EVEN-X / EVEN-Z analysis: `pattern` (plain CSS vs the Hadamard-conjugated

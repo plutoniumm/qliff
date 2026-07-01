@@ -12,7 +12,7 @@
   import {
     CanvasModel,
     tilePolygon,
-    pixelToGrid,
+    pixelToGridFor,
     gridToPixel,
     normalizeRect,
     CELL,
@@ -114,7 +114,7 @@
     if (hit === null) {
       // Empty space: either drop an armed tile, or begin a marquee.
       if (armed !== null) {
-        const g = pixelToGrid(p);
+        const g = pixelToGridFor(armed, p);
         model.addTile(armed, g.row, g.col);
         model.select(model.tiles[model.tiles.length - 1].id);
         touch();
@@ -226,7 +226,7 @@
       return;
     }
 
-    const g = pixelToGrid({ x: ev.clientX - rect.left, y: ev.clientY - rect.top });
+    const g = pixelToGridFor(kind, { x: ev.clientX - rect.left, y: ev.clientY - rect.top });
     model.addTile(kind, g.row, g.col);
     model.select(model.tiles[model.tiles.length - 1].id);
     touch();

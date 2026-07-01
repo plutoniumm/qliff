@@ -35,6 +35,72 @@
     odd: "Odd boundary",
   };
 
+  // Group the code families under titled + subtitled headers in the picker. The
+  // families themselves come from /api/templates (availability is backend-driven);
+  // this only decides grouping + copy. Anything the backend adds that is not listed
+  // here falls into a trailing "Other" group, so a new family never disappears.
+  const FAMILY_GROUPS: { title: string; subtitle: string; families: CodeFamily[] }[] = [
+    {
+      title: "Planar codes",
+      subtitle: "square lattice, matching-friendly",
+      families: ["repetition", "rotated_surface", "unrotated_surface", "toric"],
+    },
+    {
+      title: "Triangular axes",
+      subtitle: "color code + medial surface codes",
+      families: ["hex_color", "triangular", "kagome"],
+    },
+  ];
+  const FAMILY_SUB: Partial<Record<CodeFamily, string>> = {
+    repetition: "1D bit-flip chain",
+    rotated_surface: "the workhorse d x d patch",
+    unrotated_surface: "CSS, both check types",
+    toric: "periodic, two logicals",
+    hex_color: "6.6.6 color code (non-graphlike)",
+    triangular: "triangular surface code",
+    kagome: "medial: X-tri / Z-hex",
+  };
+
+  interface CodeGroup {
+    title: string;
+    subtitle: string;
+    items: TemplateInfo[];
+  }
+
+  // Partition the backend templates into the display groups, dropping empty ones.
+  function groupTemplates(all: TemplateInfo[]): CodeGroup[] {
+    const seen = new Set<string>();
+    const groups: CodeGroup[] = [];
+
+    for (const g of FAMILY_GROUPS) {
+      const items = all.filter((t) => g.families.includes(t.family));
+
+      for (const t of items) {
+        seen.add(t.family);
+      }
+
+      if (items.length > 0) {
+        groups.push({
+          title: g.title,
+          subtitle: g.subtitle,
+          items,
+        });
+      }
+    }
+
+    const rest = all.filter((t) => !seen.has(t.family));
+
+    if (rest.length > 0) {
+      groups.push({
+        title: "Other",
+        subtitle: "additional families",
+        items: rest,
+      });
+    }
+
+    return groups;
+  }
+
   interface Props {
     templates: TemplateInfo[];
     channels: ChannelInfo[];
@@ -78,6 +144,7 @@
 
   let isFreeform = $derived(code === "freeform");
   let isTemplate = $derived(code !== "" && code !== "freeform");
+  let codeGroups = $derived(groupTemplates(templates));
 
   // The picked family's metadata + the options it offers along each knob axis. One
   // option => no selector to show for that axis.
@@ -301,12 +368,37 @@
     <div class="hd">Code</div>
     <label>
       Code
-      <select bind:value={code} onchange={onCodeChange}>
-        <option value="" disabled selected>— select a code —</option>
-        {#each templates as t (t.family)}
-          <option value={t.family}>{t.label}</option>
+      <select class="code-select" bind:value={code} onchange={onCodeChange}>
+        <button>
+          <selectedcontent></selectedcontent>
+        </button>
+        <option value="" disabled>— select a code —</option>
+        {#each codeGroups as g (g.title)}
+          <optgroup label={`${g.title} -- ${g.subtitle}`}>
+            <legend>
+              <span class="g-title">{g.title}</span>
+              <span class="g-sub">{g.subtitle}</span>
+            </legend>
+            {#each g.items as t (t.family)}
+              <option value={t.family}>
+                <span class="o-title">{t.label}</span>
+                {#if FAMILY_SUB[t.family]}
+                  <span class="o-sub">{FAMILY_SUB[t.family]}</span>
+                {/if}
+              </option>
+            {/each}
+          </optgroup>
         {/each}
-        <option value="freeform">Freeform (draw)</option>
+        <optgroup label="Custom -- draw your own">
+          <legend>
+            <span class="g-title">Custom</span>
+            <span class="g-sub">draw your own lattice</span>
+          </legend>
+          <option value="freeform">
+            <span class="o-title">Freeform (draw)</span>
+            <span class="o-sub">place tiles on the canvas</span>
+          </option>
+        </optgroup>
       </select>
     </label>
 

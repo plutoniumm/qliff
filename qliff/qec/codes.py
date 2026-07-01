@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 
 from ..circuit import Circuit
+from ..noise.channel import apply_data_noise
+from .lattice import _emit_z_memory, _rotated_plaquettes, build_circuit
 
 # Surface-code stabiliser-pattern knobs (rotated + unrotated families), following the
 # EVEN-X / EVEN-Z analysis of Dutta, Seksaria and Rudra. Three orthogonal axes:
@@ -55,58 +57,20 @@ def _emit_memory(
     are reconstructed at readout. `q_basis` gives each data qubit's frame ("X" =>
     init |+> and read in the X basis, "Z" => |0> / Z basis); every primary check and
     observable must touch a qubit with the matching Pauli (the caller guarantees
-    this). Each check is read with a |+> ancilla and a controlled-X / controlled-Z
-    per corner, so mixed XZZX faces extract correctly. Per-round data noise is the
-    requested `channel` at strength p; the final transversal data measurement (in
-    each qubit's frame) seeds the boundary detectors and the observables.
+    this). Attaches the given-order ancillas (n_data + i) and the X-frame data qubits
+    and routes through the shared _emit_z_memory with universal_h -- every check is
+    read with a |+> ancilla and a per-corner CX / CZ, so mixed XZZX faces extract
+    correctly. Per-round data noise is the requested `channel` at strength p.
     """
-    c = Circuit()
-    width = len(stabilizers)
-    anc = [n_data + i for i in range(width)]
-    x_data = [q for q in range(n_data) if q_basis.get(q, "Z") == "X"]
+    x_frame = [q for q in range(n_data) if q_basis.get(q, "Z") == "X"]
+    stabs = [
+        (primary, n_data + i, corners)
+        for i, (primary, corners) in enumerate(stabilizers)
+    ]
 
-    # init: |+> on the X-frame data qubits (the rest stay |0>).
-    for q in x_data:
-        c.append("H", [q])
-
-    for r in range(rounds):
-        for q in range(n_data):
-            c.append(channel, [q], p)
-
-        for i, (primary, corners) in enumerate(stabilizers):
-            a = anc[i]
-            c.append("H", [a])
-            for q, pauli in corners:
-                if pauli == "X":
-                    c.append("CX", [a, q])
-                else:
-                    c.append("CZ", [a, q])
-            c.append("H", [a])
-            c.append("MR", [a])
-            if not primary:
-                continue
-            if r == 0:
-                c.detector(-1)
-            else:
-                c.detector(-1, -1 - width)
-
-    # transversal readout in each qubit's own frame, then boundary detectors.
-    for q in x_data:
-        c.append("H", [q])
-    for q in range(n_data):
-        c.append("M", [q])
-
-    for i, (primary, corners) in enumerate(stabilizers):
-        if not primary:
-            continue
-        recs = [-n_data + q for q, _pauli in corners]
-        prev = -n_data - width + i
-        c.detector(*recs, prev)
-
-    for index, corners in enumerate(observables):
-        c.observable(index, *[-n_data + q for q, _pauli in corners])
-
-    return c
+    return _emit_z_memory(
+        n_data, stabs, observables, rounds, channel, p, x_frame=x_frame, universal_h=True
+    )
 
 
 def _flip_on(pauli: str, condition: bool) -> str:
@@ -137,8 +101,7 @@ def repetition_code(
     checks = distance - 1
 
     for r in range(rounds):
-        for q in data:
-            c.append(channel, [q], p)
+        apply_data_noise(c.append, channel, data, p)
 
         for i in range(checks):
             c.append("CX", [data[i], anc[i]])
@@ -161,91 +124,35 @@ def repetition_code(
     return c
 
 
-def _qubit_grid(distance: int) -> tuple[dict[tuple[int, int], int], list]:
-    """
-    Map rotated-surface-code sites to qubit indices. Returns (data, plaq):
-    data[(r, c)] -> index over the d x d grid; plaq a list of
-    (kind, anc_index, touched_data), kind in {"X", "Z"}.
-    """
-    data = {}
-    for r in range(distance):
-        for col in range(distance):
-            data[(r, col)] = len(data)
-
-    plaq = []
-    index = len(data)
-
-    for r in range(-1, distance):
-        for col in range(-1, distance):
-            kind = "Z" if (r + col) % 2 == 0 else "X"
-            corners = [(r, col), (r, col + 1), (r + 1, col), (r + 1, col + 1)]
-            touch = sorted(d for d in corners if d in data)
-
-            if len(touch) == 4:
-                plaq.append((kind, index, touch))
-                index += 1
-                continue
-            if len(touch) != 2:
-                continue
-
-            on_row = r < 0 or r >= distance - 1
-            keep = (kind == "Z" and on_row) or (kind == "X" and not on_row)
-            if keep:
-                plaq.append((kind, index, touch))
-                index += 1
-
-    return data, plaq
-
-
 def _rotated_layout(
     distance: int, pattern: str, start: str, edge: str
 ) -> tuple[int, list, list, dict]:
     """
     Layout (n_data, stabilizers, observables, q_basis) for a non-default rotated
-    surface-code variant. The plaquette checkerboard and the boundary set are
-    rebuilt for the chosen `edge` (the alternate boundary keeps the column logical
-    for "even", the row logical for "odd"); `pattern`/`start` then put each data
-    qubit in its Hadamard frame (_hframe), recolouring the per-corner Paulis. The
+    surface-code variant. The plaquette checkerboard and the boundary set come from
+    _rotated_plaquettes for the chosen `edge` (the alternate boundary keeps the column
+    logical for "even", the row logical for "odd"); `pattern`/`start` then put each
+    data qubit in its Hadamard frame (_hframe), recolouring the per-corner Paulis. The
     former Z-checks stay primary, so every combination is a Clifford conjugation of
     the css/Z base and inherits its distance / determinism. Emitted via _emit_memory.
     """
-    data = {
-        (r, col): r * distance + col for r in range(distance) for col in range(distance)
-    }
     n_data = distance * distance
     in_h = {
-        data[(r, col)]: _hframe(start, pattern, (r + col) % 2 == 0) for (r, col) in data
+        r * distance + col: _hframe(start, pattern, (r + col) % 2 == 0)
+        for r in range(distance)
+        for col in range(distance)
     }
 
-    plaq = []
-    for r in range(-1, distance):
-        for col in range(-1, distance):
-            kind = "Z" if (r + col) % 2 == 0 else "X"
-            corners = [(r, col), (r, col + 1), (r + 1, col), (r + 1, col + 1)]
-            touch = sorted(data[d] for d in corners if d in data)
-
-            if len(touch) == 4:
-                plaq.append((kind, touch))
-                continue
-            if len(touch) != 2:
-                continue
-
-            on_row = r < 0 or r >= distance - 1
-            keep_even = (on_row and (r + col) % 2 == 0) or (
-                not on_row and (r + col) % 2 == 1
-            )
-            if keep_even == (edge == "even"):
-                plaq.append((kind, touch))
-
+    plaq = _rotated_plaquettes(distance, distance, edge)
     stabilizers = [
         (kind == "Z", [(q, _flip_on(kind, in_h[q])) for q in touch])
         for kind, touch in plaq
     ]
 
     if edge == "even":
-        line = [data[(r, 0)] for r in range(distance)]
+        line = [r * distance for r in range(distance)]
     else:
-        line = [data[(0, col)] for col in range(distance)]
+        line = [col for col in range(distance)]
     logical = [(q, _flip_on("Z", in_h[q])) for q in line]
     q_basis = {q: ("X" if in_h[q] else "Z") for q in range(n_data)}
 
@@ -279,46 +186,22 @@ def rotated_surface_code(
             n_data, stabilizers, observables, q_basis, rounds, channel, p
         )
 
-    data, plaq = _qubit_grid(distance)
-    z_checks = [pq for pq in plaq if pq[0] == "Z"]
-    x_checks = [pq for pq in plaq if pq[0] == "X"]
-    order = z_checks + x_checks
-    width = len(order)
-    c = Circuit()
-
-    for r in range(rounds):
-        for q in range(distance * distance):
-            c.append(channel, [q], p)
-
-        for kind, anc, touch in order:
-            if kind == "X":
-                c.append("H", [anc])
-                for d in touch:
-                    c.append("CX", [anc, data[d]])
-                c.append("H", [anc])
-            else:
-                for d in touch:
-                    c.append("CX", [data[d], anc])
-            c.append("MR", [anc])
-            if kind != "Z":
-                continue
-            if r == 0:
-                c.detector(-1)
-            else:
-                c.detector(-1, -1 - width)
-
     n_data = distance * distance
-    for q in range(n_data):
-        c.append("M", [q])
-    for k, (_kind, _anc, touch) in enumerate(z_checks):
-        recs = [-n_data + data[d] for d in touch]
-        prev = -n_data - width + k
-        c.detector(*recs, prev)
+    plaq = _rotated_plaquettes(distance, distance)
+    labelled = [(kind, n_data + i, touch) for i, (kind, touch) in enumerate(plaq)]
+    stabilizers = [
+        (True, anc, [(q, "Z") for q in touch])
+        for kind, anc, touch in labelled
+        if kind == "Z"
+    ] + [
+        (False, anc, [(q, "X") for q in touch])
+        for kind, anc, touch in labelled
+        if kind == "X"
+    ]
+    column = [r * distance for r in range(distance)]
+    observables = [[(q, "Z") for q in column]]
 
-    column = [-n_data + data[(r, 0)] for r in range(distance)]
-    c.observable(0, *column)
-
-    return c
+    return _emit_z_memory(n_data, stabilizers, observables, rounds, channel, p)
 
 
 def _unrotated_grid(distance: int) -> tuple[dict, list, list]:
@@ -412,44 +295,16 @@ def unrotated_surface_code(
 
     side = 2 * distance - 1
     data, x_checks, z_checks = _unrotated_grid(distance)
-    order = z_checks + x_checks
-    width = len(order)
     n_data = len(data)
-    c = Circuit()
+    stabilizers = [
+        (True, anc, [(d, "Z") for d in touch]) for anc, touch in z_checks
+    ] + [
+        (False, anc, [(d, "X") for d in touch]) for anc, touch in x_checks
+    ]
+    logical_z = [data[(0, col)] for col in range(side) if (0, col) in data]
+    observables = [[(q, "Z") for q in logical_z]]
 
-    for r in range(rounds):
-        for q in range(n_data):
-            c.append(channel, [q], p)
-
-        for k, (anc, touch) in enumerate(order):
-            is_x = k >= len(z_checks)
-            if is_x:
-                c.append("H", [anc])
-                for d in touch:
-                    c.append("CX", [anc, d])
-                c.append("H", [anc])
-            else:
-                for d in touch:
-                    c.append("CX", [d, anc])
-            c.append("MR", [anc])
-            if is_x:
-                continue
-            if r == 0:
-                c.detector(-1)
-            else:
-                c.detector(-1, -1 - width)
-
-    for q in range(n_data):
-        c.append("M", [q])
-    for k, (_anc, touch) in enumerate(z_checks):
-        recs = [-n_data + d for d in touch]
-        prev = -n_data - width + k
-        c.detector(*recs, prev)
-
-    logical_z = [-n_data + data[(0, col)] for col in range(side) if (0, col) in data]
-    c.observable(0, *logical_z)
-
-    return c
+    return _emit_z_memory(n_data, stabilizers, observables, rounds, channel, p)
 
 
 def _toric_grid(distance: int) -> tuple[int, list, list, list]:
@@ -500,44 +355,13 @@ def toric_code(
     detectors and the two logical-Z observables (one per non-contractible loop).
     """
     n_data, x_checks, z_checks, logicals = _toric_grid(distance)
-    z_anc = list(range(n_data, n_data + len(z_checks)))
-    x_anc = list(range(n_data + len(z_checks), n_data + len(z_checks) + len(x_checks)))
-    width = len(z_checks) + len(x_checks)
-    c = Circuit()
+    stabilizers = (
+        [("Z", touch) for touch in z_checks]
+        + [("X", touch) for touch in x_checks]
+    )
+    observables = [("Z", loop) for loop in logicals]
 
-    for r in range(rounds):
-        for q in range(n_data):
-            c.append(channel, [q], p)
-
-        for k, touch in enumerate(z_checks):
-            anc = z_anc[k]
-            for d in touch:
-                c.append("CX", [d, anc])
-            c.append("MR", [anc])
-            if r == 0:
-                c.detector(-1)
-            else:
-                c.detector(-1, -1 - width)
-
-        for k, touch in enumerate(x_checks):
-            anc = x_anc[k]
-            c.append("H", [anc])
-            for d in touch:
-                c.append("CX", [anc, d])
-            c.append("H", [anc])
-            c.append("MR", [anc])
-
-    for q in range(n_data):
-        c.append("M", [q])
-    for k, touch in enumerate(z_checks):
-        recs = [-n_data + d for d in touch]
-        prev = -n_data - width + k
-        c.detector(*recs, prev)
-
-    for obs_index, loop in enumerate(logicals):
-        c.observable(obs_index, *[-n_data + d for d in loop])
-
-    return c
+    return build_circuit(n_data, stabilizers, observables, rounds, channel, p)
 
 
 def logical_fidelity(predictions: np.ndarray, observed: np.ndarray) -> float:

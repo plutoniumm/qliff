@@ -57,13 +57,3 @@ export function downloadPNG(svg: SVGSVGElement, filename: string, scale = 2): vo
   img.onerror = () => URL.revokeObjectURL(url);
   img.src = url;
 }
-
-// Wrapper matching the surfacepro `download(...)` signature. `name` is the bare
-// stem; the extension is appended from `mode`.
-export function download(name: string, svg: SVGSVGElement, mode: "svg" | "png" = "svg"): void {
-  if (mode === "png") {
-    downloadPNG(svg, `${name}.png`);
-  } else {
-    downloadSVG(svg, `${name}.svg`);
-  }
-}

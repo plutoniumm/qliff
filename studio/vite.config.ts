@@ -10,7 +10,15 @@ export default defineConfig({
   plugins: [svelte()],
   base: "./",
   resolve: {
-    alias: { $lib: fileURLToPath(new URL("./src/lib", import.meta.url)) },
+    alias: {
+      $lib: fileURLToPath(new URL("./src/lib", import.meta.url)),
+      // Cross-codebase toolkit shared with the docs explainers, kept at repo-root
+      // shared/qui so both Svelte builds import one copy (colors, rng, palette).
+      $shared: fileURLToPath(new URL("../shared/qui", import.meta.url)),
+      // uplot (used by $shared/LinePlot) lives in studio/node_modules; the shared
+      // dir has no node_modules of its own, so point bare `uplot` imports here.
+      uplot: fileURLToPath(new URL("./node_modules/uplot", import.meta.url)),
+    },
   },
   build: {
     outDir: "../qliff/server/static",

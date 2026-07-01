@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 import random
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from .._types import Branch, Op, Targets
 
@@ -191,16 +193,87 @@ def PhaseFlip(p: float) -> PauliChannel:
     return PauliChannel(0.0, 0.0, p)
 
 
-NOISE_FACTORIES = {
-    "DEPOLARIZE1": Depolarize,
-    "DEPOLARIZE2": lambda arg: Depolarize(arg, twoq=True),
-    "X_ERROR": BitFlip,
-    "Z_ERROR": PhaseFlip,
-    "PAULI_CHANNEL_1": lambda arg: PauliChannel(*arg),
-    "RZ": lambda arg: Rotation("Z", arg),
-    "RX": lambda arg: Rotation("X", arg),
-    "AMPLITUDE_DAMP": AmplitudeDamping,
+@dataclass(frozen=True)
+class ChannelMeta:
+    """
+    One noise channel's factory plus the facts every consumer re-derives by name:
+    the human `label`, the native scalar-strength `arg_shape` ("p"/"theta"/"vec3"),
+    whether it acts on qubit PAIRS (`two_qubit`), and Pauli-ness. This is the single
+    source of truth -- a new channel is ONE entry in CHANNEL_META below.
+    """
+
+    factory: Callable[..., Channel]
+    channel_cls: type[Channel]
+    label: str
+    arg_shape: str
+    two_qubit: bool = False
+
+    @property
+    def is_pauli(self) -> bool:
+        # Pauli-ness lives on the Channel subclass; read it, never duplicate it.
+        return self.channel_cls.is_pauli
+
+
+# Source of truth for every noise channel: factory + UI/builder metadata, keyed by
+# instruction name. Add a channel here once and NOISE_FACTORIES, the arg-shape sets,
+# and the server channel table (later pass) all pick it up.
+CHANNEL_META: dict[str, ChannelMeta] = {
+    "DEPOLARIZE1": ChannelMeta(
+        factory=Depolarize,
+        channel_cls=PauliChannel,
+        label="Depolarizing (1Q)",
+        arg_shape="p",
+    ),
+    "DEPOLARIZE2": ChannelMeta(
+        factory=lambda arg: Depolarize(arg, twoq=True),
+        channel_cls=PauliChannel,
+        label="Depolarizing (2Q)",
+        arg_shape="p",
+        two_qubit=True,
+    ),
+    "X_ERROR": ChannelMeta(
+        factory=BitFlip,
+        channel_cls=PauliChannel,
+        label="Bit flip (X)",
+        arg_shape="p",
+    ),
+    "Z_ERROR": ChannelMeta(
+        factory=PhaseFlip,
+        channel_cls=PauliChannel,
+        label="Phase flip (Z)",
+        arg_shape="p",
+    ),
+    "PAULI_CHANNEL_1": ChannelMeta(
+        factory=lambda arg: PauliChannel(*arg),
+        channel_cls=PauliChannel,
+        label="Pauli channel (1Q)",
+        arg_shape="vec3",
+    ),
+    "RZ": ChannelMeta(
+        factory=lambda arg: Rotation("Z", arg),
+        channel_cls=Rotation,
+        label="Z rotation",
+        arg_shape="theta",
+    ),
+    "RX": ChannelMeta(
+        factory=lambda arg: Rotation("X", arg),
+        channel_cls=Rotation,
+        label="X rotation",
+        arg_shape="theta",
+    ),
+    "AMPLITUDE_DAMP": ChannelMeta(
+        factory=AmplitudeDamping,
+        channel_cls=AmplitudeDamping,
+        label="Amplitude damping",
+        arg_shape="p",
+    ),
 }
+
+
+# name -> factory view, derived from CHANNEL_META. Kept as the historical public
+# access so importers stay valid: NOISE_FACTORIES[name](arg), `.get(name)`,
+# `name in NOISE_FACTORIES`, and iteration over names all behave as before.
+NOISE_FACTORIES = {name: meta.factory for name, meta in CHANNEL_META.items()}
 
 
 # for name customisation
@@ -213,3 +286,47 @@ def make_channel(name: str, arg: object) -> Channel:
         raise NotImplementedError(f"unknown instruction {name!r}")
 
     return factory(arg)
+
+
+# A scalar strength p maps onto each channel's NATIVE arg shape: PAULI_CHANNEL_1
+# wants a (px, py, pz) vector, DEPOLARIZE2 acts on target PAIRS, everything else is
+# a scalar-arg single-qubit op. Both sets are DERIVED from CHANNEL_META so they can
+# never drift from it. They are shared by the template builders (qec/codes.py) and
+# the free-form spec builder (qec/lattice.py) -- a new channel declares its arg shape
+# once in CHANNEL_META, and every circuit builder picks it up. Without this a builder
+# that hard-codes `append(ch, [q], p)` crashes on PAULI_CHANNEL_1 (float is not
+# iterable) and mis-shapes DEPOLARIZE2 (one target, not a pair).
+_VECTOR_CHANNELS = {
+    name for name, meta in CHANNEL_META.items() if meta.arg_shape == "vec3"
+}
+_TWO_QUBIT_CHANNELS = {name for name, meta in CHANNEL_META.items() if meta.two_qubit}
+
+
+def channel_arg(channel: str, p: float) -> object:
+    """
+    The arg a scalar strength p becomes for `channel`: a (px, py, pz) split for
+    vector channels, else p unchanged.
+    """
+    if channel in _VECTOR_CHANNELS:
+        return (p / 3.0, p / 3.0, p / 3.0)
+
+    return p
+
+
+def apply_data_noise(append, channel: str, qubits, p: float) -> None:
+    """
+    Emit per-round data noise for `channel` at strength p onto `qubits`, via the
+    `append(name, targets, arg)` callback (e.g. Circuit.append). Scalar 1Q channels
+    hit every qubit; PAULI_CHANNEL_1 spreads p over (px, py, pz); DEPOLARIZE2 acts on
+    adjacent qubit pairs (the last qubit is dropped if the count is odd).
+    """
+    qubits = list(qubits)
+    if channel in _TWO_QUBIT_CHANNELS:
+        for i in range(0, len(qubits) - 1, 2):
+            append(channel, [qubits[i], qubits[i + 1]], p)
+
+        return
+
+    arg = channel_arg(channel, p)
+    for q in qubits:
+        append(channel, [q], arg)

@@ -3,16 +3,19 @@
 // into this model for every mutation. The model holds the tile array, the
 // selection, a clipboard, and an undo/redo history of tile-array snapshots.
 //
-// Geometry note: tiles live on an integer (row, col) grid. We project to pixels
-// inline here (no dependency on $lib/geometry, which a sibling agent still
-// owns) and expose per-tile polygon points for the SVG renderer.
+// Geometry note: tiles live on an integer (row, col) grid. Square tiles project
+// onto a rectangular pixel grid; tri/hex tiles project onto triangular axes (two
+// basis vectors at 60 degrees). We project to pixels inline here and expose
+// per-tile polygon points for the SVG renderer, reusing the shared rotation
+// kernel from $lib/geometry.
 
 import type { Tile, TileKind, LatticeSpec, Boundary } from "$lib/schema";
+import type { Point } from "$lib/geometry";
+import { rotateOffset } from "$lib/geometry";
 
-export interface Point {
-  x: number;
-  y: number;
-}
+// Re-export Point so existing importers of $lib/canvas (e.g. Canvas.svelte)
+// keep getting it from here unchanged; the definition now lives in $lib/geometry.
+export type { Point };
 
 export interface Rect {
   x: number;
@@ -24,6 +27,10 @@ export interface Rect {
 // Pixel size of one grid cell. Tiles are centred on grid points (col, row).
 export const CELL = 48;
 export const ORIGIN: Point = { x: 40, y: 40 };
+// sin(60deg) = sqrt(3)/2: the y-stride of the triangular-axis basis vector e2.
+const SIN60 = Math.sqrt(3) / 2;
+// Rotation snaps to this increment (degrees), so 0, 30, 60, ..., 330.
+const ROT_STEP = 30;
 
 let counter = 0;
 
@@ -33,17 +40,34 @@ function freshId(kind: TileKind): string {
   return `${kind}-${counter}`;
 }
 
-// Square-tile layout for a canonical code family at a distance, so selecting a
-// code DRAWS it on the canvas (a visual "constructor") instead of an empty grid.
-// repetition is a 1xd row; the surface/toric families are a dxd data patch.
+// Representative tile kind for a family's constructor drawing. Square families
+// draw a square patch; the triangular-axis families draw their patch in tri/hex
+// tiles, which the renderer then lays out on the 60-degree axes.
+function familyKind(family: string): TileKind {
+  if (family === "triangular") {
+    return "tri";
+  }
+
+  if (family === "hex_color" || family === "kagome") {
+    return "hex";
+  }
+
+  return "square";
+}
+
+// Tile layout for a canonical code family at a distance, so selecting a code
+// DRAWS it on the canvas (a visual "constructor") instead of an empty grid.
+// repetition is a 1xd row; the surface/toric families are a dxd data patch; the
+// triangular-axis families are a dxd patch of tri/hex tiles on the 60-deg axes.
 export function templateTiles(family: string, distance: number): Tile[] {
   const d = Math.max(2, Math.floor(distance));
   const tiles: Tile[] = [];
+  const kind = familyKind(family);
 
   const add = (row: number, col: number): void => {
     tiles.push({
-      id: freshId("square"),
-      kind: "square",
+      id: freshId(kind),
+      kind,
       row,
       col,
       rotation: 0,
@@ -80,12 +104,49 @@ export function pixelToGrid(p: Point): { row: number; col: number } {
   };
 }
 
+// Triangular axes: e1 = (1, 0) along col, e2 = (0.5, sin60) along row, both
+// scaled by CELL. So row shears the column to the right and down by 60 degrees.
+export function gridToPixelTri(row: number, col: number): Point {
+  return {
+    x: ORIGIN.x + (col + row * 0.5) * CELL,
+    y: ORIGIN.y + row * SIN60 * CELL,
+  };
+}
+
+// Inverse of gridToPixelTri: invert the (e1, e2) basis, then round each axis.
+export function pixelToGridTri(p: Point): { row: number; col: number } {
+  const row = (p.y - ORIGIN.y) / (SIN60 * CELL);
+  const col = (p.x - ORIGIN.x) / CELL - row * 0.5;
+
+  return { row: Math.round(row), col: Math.round(col) };
+}
+
+// tri/hex tiles snap to the triangular axes; square stays on the rectangular grid.
+export function isTriAxis(kind: TileKind): boolean {
+  return kind === "tri" || kind === "hex";
+}
+
+// Grid -> pixel centre using the transform that matches the tile kind.
+export function gridToPixelFor(kind: TileKind, row: number, col: number): Point {
+  return isTriAxis(kind) ? gridToPixelTri(row, col) : gridToPixel(row, col);
+}
+
+// Pixel -> nearest grid (row, col) using the transform that matches the kind.
+export function pixelToGridFor(kind: TileKind, p: Point): { row: number; col: number } {
+  return isTriAxis(kind) ? pixelToGridTri(p) : pixelToGrid(p);
+}
+
+// Snap an angle (degrees) to the nearest 30-degree increment, wrapped to [0, 360).
+export function snapAngle(deg: number): number {
+  return (((Math.round(deg / ROT_STEP) * ROT_STEP) % 360) + 360) % 360;
+}
+
 // Vertices of a tile's polygon in pixel space, honouring kind + rotation.
 // square: axis-aligned box rotated by `rotation` degrees about its centre.
 // hex: flat-top hexagon, rotation adds an offset angle.
 // tri: equilateral triangle, rotation 0 = pointing up, 180 = pointing down.
 export function tilePolygon(t: Tile): Point[] {
-  const c = gridToPixel(t.row, t.col);
+  const c = gridToPixelFor(t.kind, t.row, t.col);
   const r = (CELL / 2) * 0.92;
   const rot = (t.rotation * Math.PI) / 180;
 
@@ -97,7 +158,7 @@ export function tilePolygon(t: Tile): Point[] {
       { x: -r, y: r },
     ];
 
-    return base.map((v) => rotateAbout(v, rot, c));
+    return base.map((v) => rotateOffset(v.x, v.y, c.x, c.y, rot));
   }
 
   if (t.kind === "tri") {
@@ -108,7 +169,7 @@ export function tilePolygon(t: Tile): Point[] {
       { x: -r * 0.866, y: r * 0.5 },
     ];
 
-    return base.map((v) => rotateAbout(v, rot, c));
+    return base.map((v) => rotateOffset(v.x, v.y, c.x, c.y, rot));
   }
 
   // hex: 6 vertices, flat-top by default.
@@ -120,16 +181,6 @@ export function tilePolygon(t: Tile): Point[] {
   }
 
   return pts;
-}
-
-function rotateAbout(v: Point, rot: number, c: Point): Point {
-  const cos = Math.cos(rot);
-  const sin = Math.sin(rot);
-
-  return {
-    x: c.x + v.x * cos - v.y * sin,
-    y: c.y + v.x * sin + v.y * cos,
-  };
 }
 
 // Even-odd point-in-polygon for hit-testing tiles under the pointer.
@@ -270,7 +321,7 @@ export class CanvasModel {
       kind,
       row,
       col,
-      rotation,
+      rotation: snapAngle(rotation),
     };
     this.tiles.push(tile);
 
@@ -345,7 +396,10 @@ export class CanvasModel {
         const n = at.get(`${t.row + dr},${t.col + dc}`);
 
         if (n !== undefined) {
-          out.push({ a: gridToPixel(t.row, t.col), b: gridToPixel(n.row, n.col) });
+          out.push({
+            a: gridToPixelFor(t.kind, t.row, t.col),
+            b: gridToPixelFor(n.kind, n.row, n.col),
+          });
         }
       }
     }
@@ -447,7 +501,8 @@ export class CanvasModel {
     }
   }
 
-  // Rotate selected tiles. square +90, hex +60, tri flips 0<->180.
+  // Rotate selected tiles by one 30-degree step. Rotations stay snapped to the
+  // 30-degree increments (0, 30, 60, ..., 330) for every tile kind.
   rotate(): void {
     if (this.selected.size === 0) {
       return;
@@ -460,13 +515,7 @@ export class CanvasModel {
         continue;
       }
 
-      if (t.kind === "square") {
-        t.rotation = (t.rotation + 90) % 360;
-      } else if (t.kind === "hex") {
-        t.rotation = (t.rotation + 60) % 360;
-      } else {
-        t.rotation = t.rotation === 0 ? 180 : 0;
-      }
+      t.rotation = snapAngle(t.rotation + ROT_STEP);
     }
   }
 

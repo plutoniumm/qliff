@@ -6,6 +6,11 @@
    tokens / .prose / shared classes rather than reinventing styles, so the pages
    stay visually identical. */
 
+/* Shared qliff palette (accent + Pauli hexes) -- kept in one place so the docs
+   explainers and the studio SPA can not drift. Defined on :root; the .qtut domain
+   hues and the light-mode overrides below still win by specificity. */
+@import "../../shared/qui/palette.css";
+
 .qtut {
   /* SURFACES + INK map onto VitePress' own tokens, so the explainer follows the
      docs' light/dark toggle and sits on the same backgrounds as the prose pages.
@@ -24,20 +29,15 @@
   --faint: var(--vp-c-text-3);
 
   /* ACCENTS + DOMAIN colors are the explainers' visual language (decoder purple,
-     Pauli X/Z, success/failure...). Kept saturated so SVG/canvas marks read on
-     either background; light-mode tweaks for the few that need contrast are in the
-     `:where(:root:not(.dark)) .qtut` block below. */
-  --accent: #8b6cff;
-  --accent-2: #4cc9f0;
-  --accent-3: #ff5d8f;
-  --ink-on-accent: #0a0b16;
+     Pauli X/Z, success/failure...). The shared base hues (--accent*, --x, --z) live
+     in shared/qui/palette.css; the domain hues below and the light-mode tweaks in
+     the `:root:not(.dark) .qtut` block stay docs-specific. Kept saturated so
+     SVG/canvas marks read on either background. */
   --grad-soft: linear-gradient(125deg,
       color-mix(in srgb, var(--accent-2) 22%, transparent),
       color-mix(in srgb, var(--accent) 22%, transparent),
       color-mix(in srgb, var(--accent-3) 22%, transparent));
 
-  --x: #ff5d8f;
-  --z: #4cc9f0;
   --y: #ffd166;
   --ok: #5be8b0;
   --bad: #ff6b6b;

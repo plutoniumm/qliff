@@ -91,15 +91,21 @@ export function getBBox(bounds: Bounds, padding: number, square: boolean): ViewB
   };
 }
 
+// Apply the 2x2 rotation matrix to an offset (dx,dy) by rad radians, translated
+// to centre (cx,cy). Shared kernel for rotatePoint (below) and the canvas tile
+// rotation, so the rotation maths lives in exactly one place.
+export function rotateOffset(dx: number, dy: number, cx: number, cy: number, rad: number): Point {
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+
+  return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+}
+
 // Rotate p about (cx,cy) by deg degrees (SVG coords: +y down, so clockwise).
 export function rotatePoint(p: Point, cx: number, cy: number, deg: number): Point {
   const rad = (Math.PI / 180) * deg;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  const dx = p.x - cx;
-  const dy = p.y - cy;
 
-  return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+  return rotateOffset(p.x - cx, p.y - cy, cx, cy, rad);
 }
 
 // Quantise to 1/100 so floating-point jitter does not break dedupe keys.

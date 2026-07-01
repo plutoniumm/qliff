@@ -6,7 +6,7 @@ import numpy as np
 
 from .._core import ColTableau
 from .._types import Branch
-from ..circuit import Circuit
+from ..circuit import Circuit, _lower_gates
 from ..pauli import PauliString
 from ..simulator import CLIFFORD_OPS, GATE_OPCODE, GATES_1, GATES_2, MEAS, Simulator
 from .channel import make_channel
@@ -14,33 +14,19 @@ from .channel import make_channel
 _UNSET = object()  # sentinel: CompiledSampler reference not computed yet
 
 
-def _compile_branches(branches: list[Branch]) -> list | None:
+def _compile_branches(
+    branches: list[Branch], reset_opcode: int | None = None
+) -> list | None:
     # convert a channel's (weight, ops) branches to (weight, [(opcode, a, b), ...])
-    # for the Rust sampler; None if any branch op has no core opcode.
+    # for the Rust sampler; None if any branch op has no core opcode. reset_opcode
+    # (when set) lowers a reset op "R" to that opcode -- the estimator passes 9, so
+    # its SIGNED-weight branches carry resets the plain sampler has no opcode for.
     table = []
     for weight, ops in branches:
         cops = []
         for gate, qubits in ops:
-            code = GATE_OPCODE.get(gate)
-            if code is None:
-                return None
-
-            b = qubits[1] if len(qubits) == 2 else 0
-            cops.append((code, qubits[0], b))
-        table.append((float(weight), cops))
-
-    return table
-
-
-def _compile_estimate_branches(branches: list[Branch]) -> list | None:
-    # (SIGNED weight, [(opcode, a, b), ...]) per branch for the Rust estimator;
-    # opcode 9 = reset. None if a branch op has no core opcode.
-    table = []
-    for weight, ops in branches:
-        cops = []
-        for gate, qubits in ops:
-            if gate == "R":
-                cops.append((9, qubits[0], 0))
+            if reset_opcode is not None and gate == "R":
+                cops.append((reset_opcode, qubits[0], 0))
                 continue
 
             code = GATE_OPCODE.get(gate)
@@ -91,15 +77,8 @@ class Sampler:
         tables = []
 
         for name, targets, arg in self.circuit.instructions:
-            if name in GATES_1:
-                op = GATE_OPCODE[name]
-                instrs.extend((0, op, q, 0) for q in targets)
-            elif name in GATES_2:
-                op = GATE_OPCODE[name]
-                instrs.extend(
-                    (0, op, targets[k], targets[k + 1])
-                    for k in range(0, len(targets), 2)
-                )
+            if name in GATES_1 or name in GATES_2:
+                instrs.extend((0, op, a, b) for op, a, b in _lower_gates(name, targets))
             elif name == "M":
                 instrs.extend((1, 0, q, 0) for q in targets)
             elif name == "MR":
@@ -177,20 +156,13 @@ class Sampler:
         tables = []
 
         for name, targets, arg in self.circuit.instructions:
-            if name in GATES_1:
-                op = GATE_OPCODE[name]
-                instrs.extend((0, op, q, 0) for q in targets)
-            elif name in GATES_2:
-                op = GATE_OPCODE[name]
-                instrs.extend(
-                    (0, op, targets[k], targets[k + 1])
-                    for k in range(0, len(targets), 2)
-                )
+            if name in GATES_1 or name in GATES_2:
+                instrs.extend((0, op, a, b) for op, a, b in _lower_gates(name, targets))
             elif name in MEAS:
                 return None
             else:
-                table = _compile_estimate_branches(
-                    make_channel(name, arg).branches(targets)
+                table = _compile_branches(
+                    make_channel(name, arg).branches(targets), reset_opcode=9
                 )
                 if table is None:
                     return None

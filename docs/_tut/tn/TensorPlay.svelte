@@ -5,7 +5,7 @@
   // update live. This is the whole grammar of tensor networks in one widget --
   // contraction = "sum over the shared leg". Pure derived state, no effects.
   import { heat } from "$lib/colors";
-  import MathTex from "$lib/Math.svelte";
+  import MathTex from "./Tex.svelte";
 
   let A = $state([
     [0.9, 0.1],

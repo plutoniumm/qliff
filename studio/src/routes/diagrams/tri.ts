@@ -5,7 +5,7 @@
 // on the edge-midpoints of the parent triangular lattice. Diagram-only -- no
 // simulation; faces are coloured purely for visual structure.
 
-import { getBounds, getBBox } from "$lib/geometry";
+import { getBounds, getBBox, ptKey } from "$lib/geometry";
 import type { Point, Bounds, ViewBox } from "$lib/geometry";
 
 export type TriColorKey = "A" | "B" | "C";
@@ -200,11 +200,9 @@ function buildKagome(
   // Intern edge-midpoints as the Kagome sites (one per parent edge).
   const verts: TriVertex[] = [];
   const index = new Map<string, number>();
-  const round = (v: number) => Math.round(v * 100);
-  const key = (p: Point) => `${round(p.x)}:${round(p.y)}`;
 
   const intern = (p: Point): number => {
-    const k = key(p);
+    const k = ptKey(p.x, p.y);
     const hit = index.get(k);
 
     if (hit !== undefined) return hit;

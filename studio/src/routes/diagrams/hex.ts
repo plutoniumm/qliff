@@ -3,7 +3,7 @@
 // two faces; its colour is the third one (3 - a - b), giving the colour-code
 // edge structure. Diagram-only -- colours/labels are caller-supplied.
 
-import { getBounds, getBBox, edgeKey } from "$lib/geometry";
+import { getBounds, getBBox, edgeKey, ptKey } from "$lib/geometry";
 import type { Point, Bounds, ViewBox } from "$lib/geometry";
 
 export type ColorKey = "A" | "B" | "C";
@@ -156,7 +156,7 @@ export function Grid(
   const vseen = new Map<string, Point>();
 
   for (const p of all) {
-    const key = `${Math.round(p.x * 100)}:${Math.round(p.y * 100)}`;
+    const key = ptKey(p.x, p.y);
 
     if (!vseen.has(key)) vseen.set(key, p);
   }

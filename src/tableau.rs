@@ -5,6 +5,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+// splitmix64 finalizer: the xorshift-multiply avalanche (the >>30/>>27/>>31 folds
+// mix the high bits down so every input bit reaches every output bit). shared by
+// the Rng stream advance and the per-chunk seed derivation (chunk_seed).
+#[inline]
+fn splitmix_finalize(z: u64) -> u64 {
+    let z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 // splitmix64 (canonical constants): fast, seedable; fine for measurement coins
 // and noise sampling (not crypto).
 #[derive(Clone)]
@@ -18,13 +28,9 @@ impl Rng {
     }
     #[inline]
     fn next_u64(&mut self) -> u64 {
-        // advance by the golden-ratio odd constant, then the xorshift-multiply
-        // finalizer (the >>30/>>27/>>31 fold high bits down to mix every bit).
+        // advance by the golden-ratio odd constant, then run the splitmix finalizer.
         self.s = self.s.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.s;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
+        splitmix_finalize(self.s)
     }
     #[inline]
     fn next_bool(&mut self) -> bool {
@@ -50,13 +56,25 @@ const BATCH_CHUNK: usize = 256;
 // final observable expectation -- heavy, so a small chunk for balance.
 const EST_CHUNK: usize = 256;
 
+// Gate opcode ABI. These integer values are the wire protocol shared with Python
+// (co-owned by qliff/simulator.py GATE_OPCODE and qliff/noise/sampler.py), so the
+// numbers MUST NOT change -- only the names are ours. OP_RESET (9) is reset, used
+// only inside quasiprobability branch op streams (estimate_chunk).
+const OP_H: u8 = 0;
+const OP_S: u8 = 1;
+const OP_S_DAG: u8 = 2;
+const OP_X: u8 = 3;
+const OP_Y: u8 = 4;
+const OP_Z: u8 = 5;
+const OP_CX: u8 = 6;
+const OP_CZ: u8 = 7;
+const OP_SWAP: u8 = 8;
+const OP_RESET: u8 = 9;
+
 // Per-chunk noise seed: decorrelate (base, chunk) through the splitmix finalizer
 // so disjoint shot-chunks draw independent streams.
 fn chunk_seed(base: u64, chunk: u64) -> u64 {
-    let mut z = base ^ chunk.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
+    splitmix_finalize(base ^ chunk.wrapping_mul(0x9E37_79B9_7F4A_7C15))
 }
 
 // one shot-chunk of the Pauli-frame engine: replay instrs over `chunk_shots`
@@ -83,21 +101,22 @@ fn frame_chunk(
         match kind {
             0 => {
                 let (fa, fb) = ((y as usize) * sw, (z as usize) * sw);
-                match x {
-                    0 => {
+                // x is the gate opcode (see OP_* consts); narrow to u8 to match them.
+                match x as u8 {
+                    OP_H => {
                         for k in 0..sw {
                             let t = fx[fa + k];
                             fx[fa + k] = fz[fa + k];
                             fz[fa + k] = t;
                         }
                     }
-                    1 | 2 => {
+                    OP_S | OP_S_DAG => {
                         for k in 0..sw {
                             fz[fa + k] ^= fx[fa + k];
                         }
                     }
-                    3 | 4 | 5 => {} // X/Y/Z: identity on the (sign-free) frame
-                    6 => {
+                    OP_X | OP_Y | OP_Z => {} // X/Y/Z: identity on the (sign-free) frame
+                    OP_CX => {
                         for k in 0..sw {
                             let fxa = fx[fa + k];
                             let fzb = fz[fb + k];
@@ -105,7 +124,7 @@ fn frame_chunk(
                             fz[fa + k] ^= fzb;
                         }
                     }
-                    7 => {
+                    OP_CZ => {
                         for k in 0..sw {
                             let fxa = fx[fa + k];
                             let fxb = fx[fb + k];
@@ -113,7 +132,7 @@ fn frame_chunk(
                             fz[fb + k] ^= fxa;
                         }
                     }
-                    8 => {
+                    OP_SWAP => {
                         for k in 0..sw {
                             fx.swap(fa + k, fb + k);
                             fz.swap(fa + k, fb + k);
@@ -218,6 +237,24 @@ fn frame_chunk(
     }
 }
 
+// pick the branch whose cumulative |weight| first reaches `thr` (a draw already
+// scaled to the same total the caller summed over). falls back to the last branch
+// when `thr` lands past the accumulated sum (floating-point tail). shared by the
+// two per-shot samplers (batch_chunk, estimate_chunk) -- per-shot hot code.
+#[inline]
+fn pick_branch(table: &[(f64, Vec<(u8, u32, u32)>)], thr: f64) -> usize {
+    let mut acc = 0.0;
+    let mut pick = table.len() - 1;
+    for (i, (w, _)) in table.iter().enumerate() {
+        acc += w.abs();
+        if thr <= acc {
+            pick = i;
+            break;
+        }
+    }
+    pick
+}
+
 // one shot-chunk of the per-shot tableau MC sampler (used when a measurement is
 // random, so the frame method can't apply). each chunk owns a tableau (reset per
 // shot) + its own coin/noise RNGs -> parallel, records written shot-major into
@@ -256,16 +293,7 @@ fn batch_chunk(
                 2 => {
                     let table = &branches[x as usize];
                     let total: f64 = table.iter().map(|(w, _)| w.abs()).sum();
-                    let thr = noise.next_f64() * total;
-                    let mut acc = 0.0;
-                    let mut pick = table.len() - 1;
-                    for (i, (w, _)) in table.iter().enumerate() {
-                        acc += w.abs();
-                        if thr <= acc {
-                            pick = i;
-                            break;
-                        }
-                    }
+                    let pick = pick_branch(table, noise.next_f64() * total);
                     for &(op, a, b) in &table[pick].1 {
                         t.apply_gate(op, a as usize, b as usize);
                     }
@@ -307,20 +335,11 @@ fn estimate_chunk(
                 2 => {
                     let table = &branches[x as usize];
                     let gamma = gammas[x as usize];
-                    let thr = noise.next_f64() * gamma;
-                    let mut a = 0.0;
-                    let mut pick = table.len() - 1;
-                    for (i, (w, _)) in table.iter().enumerate() {
-                        a += w.abs();
-                        if thr <= a {
-                            pick = i;
-                            break;
-                        }
-                    }
+                    let pick = pick_branch(table, noise.next_f64() * gamma);
                     let (w, ops) = &table[pick];
                     weight *= if *w >= 0.0 { gamma } else { -gamma };
                     for &(op, qa, qb) in ops {
-                        if op == 9 {
+                        if op == OP_RESET {
                             t.reset(qa as usize);
                         } else {
                             t.apply_gate(op, qa as usize, qb as usize);
@@ -338,25 +357,7 @@ fn estimate_chunk(
     acc
 }
 
-// g = power of i when (x1,z1) * (x2,z2).
-// Encoding I=(0,0) X=(1,0) Z=(0,1) Y=(1,1); e ∈ {-1,0,+1}:
-//   P1=I -> 0
-//   P1=X -> z2*(2*x2-1)   = +1 if P2=Y, -1 if P2=Z, else 0
-//   P1=Z -> x2*(1-2*z2)   = +1 if P2=X, -1 if P2=Y, else 0
-//   P1=Y -> z2 - x2       = +1 if P2=Z, -1 if P2=X, else 0
-// scalar reference; `word_g` (below) does this bit-parallel.
-#[allow(dead_code)]
-#[inline]
-fn g(x1: bool, z1: bool, x2: bool, z2: bool) -> i32 {
-    match (x1, z1) {
-        (false, false) => 0,                                   // I
-        (true, false) => (z2 as i32) * (2 * (x2 as i32) - 1),  // X
-        (false, true) => (x2 as i32) * (1 - 2 * (z2 as i32)),  // Z
-        (true, true) => (z2 as i32) - (x2 as i32),             // Y
-    }
-}
-
-// word_g: Σ g over the 64 Pauli lanes in one word, lane k = P1=(xi,zi)[k],
+// word_g: Sum of g over the 64 Pauli lanes in one word, lane k = P1=(xi,zi)[k],
 // P2=(xh,zh)[k]. bit-parallel form of g(): each lane is +1/-1/0, popcount the two
 // masks. encoding P=(x,z): I=00 X=10 Z=01 Y=11.
 //   +1 lanes: (X,Y) (Z,X) (Y,Z)        -1 lanes: (X,Z) (Z,Y) (Y,X)
@@ -374,9 +375,10 @@ fn word_g(xi: u64, zi: u64, xh: u64, zh: u64) -> i32 {
 //   n..2n   stabilizers
 //   2n      scratch (measurement)
 // init is always |0...0> (destab i = X_i, stab i = Z_i) -- keeps ZZ trivial.
-#[pyclass]
+// not a #[pyclass]: it is an internal engine reached only through ColTableau.inner
+// (measurement, records, expectation), never constructed from Python.
 #[derive(Clone)]
-pub struct RowTableau {
+pub(crate) struct RowTableau {
     nq: usize,
     // words per row: ceil(n/64)
     w: usize,
@@ -558,10 +560,7 @@ impl RowTableau {
     }
 }
 
-#[pymethods]
 impl RowTableau {
-    #[new]
-    #[pyo3(signature = (n, seed=None))]
     fn new(n: usize, seed: Option<u64>) -> Self {
         let w = (n + 63) / 64;
         let rows = 2 * n + 1;
@@ -591,53 +590,8 @@ impl RowTableau {
         t
     }
 
-    #[getter]
-    fn n(&self) -> usize {
-        self.nq
-    }
-
-    // H: swap x<->z; sign ^= x & z
-    fn h(&mut self, a: usize) {
-        let wa = a >> 6; // word a/64
-        let sh = a & 63; // bit a mod 64
-        let m = 1u64 << sh; // mask 2^(a mod 64)
-        for i in 0..2 * self.nq {
-            let b = i * self.w + wa;
-            let xb = (self.xs[b] >> sh) & 1; // bit a of row i
-            let zb = (self.zs[b] >> sh) & 1;
-            self.signs[i] ^= (xb & zb) as u8;
-            self.xs[b] = (self.xs[b] & !m) | (zb << sh); // clear bit a, set it to z
-            self.zs[b] = (self.zs[b] & !m) | (xb << sh); // clear bit a, set it to x
-        }
-    }
-
-    // S: z ^= x; sign ^= x & z
-    fn s(&mut self, a: usize) {
-        let wa = a >> 6;
-        let sh = a & 63;
-        for i in 0..2 * self.nq {
-            let b = i * self.w + wa;
-            let xb = (self.xs[b] >> sh) & 1;
-            let zb = (self.zs[b] >> sh) & 1;
-            self.signs[i] ^= (xb & zb) as u8;
-            self.zs[b] ^= xb << sh;
-        }
-    }
-
-    // S-dagger: z ^= x; sign ^= x & !z
-    fn s_dag(&mut self, a: usize) {
-        let wa = a >> 6;
-        let sh = a & 63;
-        for i in 0..2 * self.nq {
-            let b = i * self.w + wa;
-            let xb = (self.xs[b] >> sh) & 1;
-            let zb = (self.zs[b] >> sh) & 1;
-            self.signs[i] ^= (xb & (zb ^ 1)) as u8;
-            self.zs[b] ^= xb << sh;
-        }
-    }
-
-    // X: sign ^= z
+    // X: sign ^= z. the only single-qubit gate the row engine still applies
+    // directly (mr/reset flip the measured qubit; frame_reference replays MR).
     fn x(&mut self, a: usize) {
         let wa = a >> 6;
         let sh = a & 63;
@@ -647,75 +601,6 @@ impl RowTableau {
         }
     }
 
-    // Z: sign ^= x
-    fn z(&mut self, a: usize) {
-        let wa = a >> 6;
-        let sh = a & 63;
-        for i in 0..2 * self.nq {
-            let xb = (self.xs[i * self.w + wa] >> sh) & 1;
-            self.signs[i] ^= xb as u8;
-        }
-    }
-
-    // Y: sign ^= x ^ z
-    fn y(&mut self, a: usize) {
-        let wa = a >> 6;
-        let sh = a & 63;
-        for i in 0..2 * self.nq {
-            let b = i * self.w + wa;
-            let xb = (self.xs[b] >> sh) & 1;
-            let zb = (self.zs[b] >> sh) & 1;
-            self.signs[i] ^= (xb ^ zb) as u8;
-        }
-    }
-
-    // CNOT a->b: x_b ^= x_a, z_a ^= z_b; sign ^= x_a & z_b & (x_b ^ z_a ^ 1)
-    fn cx(&mut self, a: usize, b: usize) {
-        let wa = a >> 6;
-        let sa = a & 63;
-        let wb = b >> 6;
-        let sb = b & 63;
-        for i in 0..2 * self.nq {
-            let ia = i * self.w + wa;
-            let ib = i * self.w + wb;
-            let xa = (self.xs[ia] >> sa) & 1;
-            let za = (self.zs[ia] >> sa) & 1;
-            let xtb = (self.xs[ib] >> sb) & 1;
-            let ztb = (self.zs[ib] >> sb) & 1;
-            self.signs[i] ^= (xa & ztb & (xtb ^ za ^ 1)) as u8;
-            self.xs[ib] ^= xa << sb;
-            self.zs[ia] ^= ztb << sa;
-        }
-    }
-
-    // CZ (symmetric): za ^= xb; zb ^= xa; sign ^= xa & xb & (za ^ zb).
-    // Direct single pass over rows. Composing H_b·CX(a,b)·H_b gives this sign
-    // term (the za,zb in it are the originals, read before the z-updates).
-    fn cz(&mut self, a: usize, b: usize) {
-        let wa = a >> 6;
-        let sa = a & 63;
-        let wb = b >> 6;
-        let sb = b & 63;
-        for i in 0..2 * self.nq {
-            let ia = i * self.w + wa;
-            let ib = i * self.w + wb;
-            let xa = (self.xs[ia] >> sa) & 1;
-            let za = (self.zs[ia] >> sa) & 1;
-            let xb = (self.xs[ib] >> sb) & 1;
-            let zb = (self.zs[ib] >> sb) & 1;
-            self.signs[i] ^= (xa & xb & (za ^ zb)) as u8;
-            self.zs[ia] ^= xb << sa;
-            self.zs[ib] ^= xa << sb;
-        }
-    }
-
-    fn swap(&mut self, a: usize, b: usize) {
-        self.cx(a, b);
-        self.cx(b, a);
-        self.cx(a, b);
-    }
-
-    #[pyo3(signature = (a, force=None))]
     fn measure(&mut self, a: usize, force: Option<bool>) -> bool {
         let o = self.do_measure(a, force).0;
         self.record.push(o);
@@ -739,7 +624,6 @@ impl RowTableau {
         }
     }
 
-    #[getter]
     fn record(&self) -> Vec<bool> {
         self.record.clone()
     }
@@ -801,7 +685,6 @@ impl RowTableau {
         }
     }
 
-    #[pyo3(signature = (px, pz, force=None))]
     fn measure_pauli(&mut self, px: Vec<u8>, pz: Vec<u8>, force: Option<bool>) -> (bool, bool) {
         let n = self.nq;
         let mut p = None;
@@ -838,14 +721,6 @@ impl RowTableau {
                 (self.signs[sc] != 0, false)
             }
         }
-    }
-
-    fn copy(&self) -> RowTableau {
-        self.clone()
-    }
-
-    fn __repr__(&self) -> String {
-        format!("RowTableau(n={})", self.nq)
     }
 }
 
@@ -1085,50 +960,51 @@ impl ColTableau {
         self.layout = Layout::Col;
     }
 
-    // the one place col-major gate logic lives. whole-plane op by opcode
-    // (0=H 1=S 2=S_DAG 3=X 4=Y 5=Z 6=CX 7=CZ 8=SWAP); b unused for 1-qubit. caller
-    // must already be Col layout. #[inline] folds the dispatch into run()'s hot loop.
+    // the one place col-major gate logic lives. whole-plane op by opcode (OP_*
+    // consts: 0=H 1=S 2=S_DAG 3=X 4=Y 5=Z 6=CX 7=CZ 8=SWAP); b unused for 1-qubit.
+    // caller must already be Col layout. #[inline] folds the dispatch into run()'s
+    // hot loop.
     #[inline]
     fn gate(&mut self, op: u8, a: usize, b: usize) {
         let rw = self.rw;
         let base = a * rw;
         match op {
-            0 => k_h(
+            OP_H => k_h(
                 &mut self.signc[..rw],
                 &mut self.xc[base..base + rw],
                 &mut self.zc[base..base + rw],
             ),
-            1 => k_s(
+            OP_S => k_s(
                 &mut self.signc[..rw],
                 &self.xc[base..base + rw],
                 &mut self.zc[base..base + rw],
             ),
-            2 => k_sdag(
+            OP_S_DAG => k_sdag(
                 &mut self.signc[..rw],
                 &self.xc[base..base + rw],
                 &mut self.zc[base..base + rw],
             ),
-            3 => k_x(&mut self.signc[..rw], &self.zc[base..base + rw]),
-            4 => k_y(
+            OP_X => k_x(&mut self.signc[..rw], &self.zc[base..base + rw]),
+            OP_Y => k_y(
                 &mut self.signc[..rw],
                 &self.xc[base..base + rw],
                 &self.zc[base..base + rw],
             ),
-            5 => k_z(&mut self.signc[..rw], &self.xc[base..base + rw]),
-            6 => {
+            OP_Z => k_z(&mut self.signc[..rw], &self.xc[base..base + rw]),
+            OP_CX => {
                 let (xa, xb) = planes_mut(&mut self.xc, a, b, rw);
                 let (za, zb) = planes_mut(&mut self.zc, a, b, rw);
                 k_cx(&mut self.signc[..rw], xa, za, xb, zb);
             }
-            7 => {
+            OP_CZ => {
                 let (xa, xb) = planes_mut(&mut self.xc, a, b, rw);
                 let (za, zb) = planes_mut(&mut self.zc, a, b, rw);
                 k_cz(&mut self.signc[..rw], xa, za, xb, zb);
             }
-            8 => {
-                self.gate(6, a, b);
-                self.gate(6, b, a);
-                self.gate(6, a, b);
+            OP_SWAP => {
+                self.gate(OP_CX, a, b);
+                self.gate(OP_CX, b, a);
+                self.gate(OP_CX, a, b);
             }
             _ => {}
         }
@@ -1230,50 +1106,13 @@ impl ColTableau {
     }
 
     // apply a compiled (op, a, b) stream in one call: one to_col for the whole
-    // batch, no per-gate Python dispatch. dispatches to the same #[inline] kernels
-    // gate() uses, folded into this hot loop -> one source of the col-major math.
+    // batch, no per-gate Python dispatch. replays through the shared #[inline]
+    // gate() core -- it folds back into this hot loop with identical codegen to an
+    // inlined match, so there is a single source for the col-major gate math.
     fn run(&mut self, ops: Vec<(u8, u32, u32)>) {
         self.to_col();
-        let rw = self.rw;
         for (op, a, b) in ops {
-            let (a, b) = (a as usize, b as usize);
-            let base = a * rw;
-            match op {
-                0 => k_h(
-                    &mut self.signc[..rw],
-                    &mut self.xc[base..base + rw],
-                    &mut self.zc[base..base + rw],
-                ),
-                1 => k_s(
-                    &mut self.signc[..rw],
-                    &self.xc[base..base + rw],
-                    &mut self.zc[base..base + rw],
-                ),
-                2 => k_sdag(
-                    &mut self.signc[..rw],
-                    &self.xc[base..base + rw],
-                    &mut self.zc[base..base + rw],
-                ),
-                3 => k_x(&mut self.signc[..rw], &self.zc[base..base + rw]),
-                4 => k_y(
-                    &mut self.signc[..rw],
-                    &self.xc[base..base + rw],
-                    &self.zc[base..base + rw],
-                ),
-                5 => k_z(&mut self.signc[..rw], &self.xc[base..base + rw]),
-                6 => {
-                    let (xa, xb) = planes_mut(&mut self.xc, a, b, rw);
-                    let (za, zb) = planes_mut(&mut self.zc, a, b, rw);
-                    k_cx(&mut self.signc[..rw], xa, za, xb, zb);
-                }
-                7 => {
-                    let (xa, xb) = planes_mut(&mut self.xc, a, b, rw);
-                    let (za, zb) = planes_mut(&mut self.zc, a, b, rw);
-                    k_cz(&mut self.signc[..rw], xa, za, xb, zb);
-                }
-                8 => self.swap(a, b),
-                _ => {}
-            }
+            self.gate(op, a as usize, b as usize);
         }
     }
 
@@ -1495,5 +1334,42 @@ impl ColTableau {
 
     fn __repr__(&self) -> String {
         format!("ColTableau(n={})", self.nq)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::word_g;
+
+    // Scalar reference for the phase g = power of i when (x1,z1) * (x2,z2).
+    // Encoding I=(0,0) X=(1,0) Z=(0,1) Y=(1,1); result in {-1, 0, +1}:
+    //   P1=I -> 0
+    //   P1=X -> z2*(2*x2-1)   = +1 if P2=Y, -1 if P2=Z, else 0
+    //   P1=Z -> x2*(1-2*z2)   = +1 if P2=X, -1 if P2=Y, else 0
+    //   P1=Y -> z2 - x2       = +1 if P2=Z, -1 if P2=X, else 0
+    // this is the former dead scalar helper, now kept only as the correctness
+    // oracle for the bit-parallel word_g used in the hot path.
+    fn g(x1: bool, z1: bool, x2: bool, z2: bool) -> i32 {
+        match (x1, z1) {
+            (false, false) => 0,                                  // I
+            (true, false) => (z2 as i32) * (2 * (x2 as i32) - 1), // X
+            (false, true) => (x2 as i32) * (1 - 2 * (z2 as i32)), // Z
+            (true, true) => (z2 as i32) - (x2 as i32),            // Y
+        }
+    }
+
+    // word_g on single-bit inputs sums g over one active lane (the other 63 lanes
+    // are identity -> 0), so it must equal the scalar g on every Pauli pair.
+    #[test]
+    fn word_g_matches_scalar() {
+        for a in 0..4u64 {
+            for b in 0..4u64 {
+                let (x1, z1) = (a & 1, (a >> 1) & 1);
+                let (x2, z2) = (b & 1, (b >> 1) & 1);
+                let expected = g(x1 == 1, z1 == 1, x2 == 1, z2 == 1);
+                let got = word_g(x1, z1, x2, z2);
+                assert_eq!(got, expected, "word_g disagrees at a={a} b={b}");
+            }
+        }
     }
 }

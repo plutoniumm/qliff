@@ -1,7 +1,9 @@
 <script lang="ts">
-  // Square surface-code lattice diagram + its controls. Shares the control-panel
-  // chrome (.diagram-*) and the mark styles with the triangular/hex diagrams so
-  // all three stay consistent -- see app.css.
+  // Square surface-code lattice diagram. Shares the sidebar chrome + the data-qubit
+  // render loop with the triangular / hex diagrams via DiagramShell; keeps its own
+  // marks (boundary half-circles, CSS/XZZX plaquettes + wedges) since those have no
+  // counterpart in the other two. The face polygons + face labels are drawn here,
+  // wrapped in the optional 45-degree rotation group.
   import { buildRect } from "./rect";
   import type {
     DiagramPattern,
@@ -9,7 +11,7 @@
     DiagramEdge,
     FaceType,
   } from "./rect";
-  import LatticeView from "./LatticeView.svelte";
+  import DiagramShell, { PHASE_HUES } from "./DiagramShell.svelte";
 
   let cols = $state(5);
   let rows = $state(5);
@@ -38,12 +40,12 @@
     { value: "odd", label: "Odd boundary" },
   ];
 
-  // X/Z stabilizer colours, a subset of the color-code A/B/C palette so the three
-  // diagrams share a hue language (Z = blue, X = red). XZZX reuses the same two: each
-  // plaquette is a conic pinwheel of X (red) / Z (blue) corner wedges.
+  // X/Z stabilizer colours, the Z / X ends of the shared phase-wheel palette (Z = the
+  // A/cyan hue, X = the C/magenta hue). XZZX reuses the same two: each plaquette is a
+  // conic pinwheel of X (magenta) / Z (cyan) corner wedges.
   let colors = $state({
-    Z: "#4cc9f0",
-    X: "#ff5d8f",
+    Z: PHASE_HUES.A,
+    X: PHASE_HUES.C,
   });
 
   function colorOf(type: FaceType | undefined): string {
@@ -63,12 +65,18 @@
   let name = $derived(`surface_code_${pattern}_${start}_${edge}_${cols}x${rows}`);
 </script>
 
-<div class="diagram-layout">
-  <aside class="diagram-sidebar glass">
-    <header class="head">
-      <h3 class="gradient-text">Square surface code</h3>
-      <p class="sub">CSS planar code &middot; X/Z plaquettes</p>
-    </header>
+<DiagramShell
+  title="Square surface code"
+  colorLegend="Stabilizer colors"
+  viewBox={lattice.view.viewBox}
+  {name}
+  bind:showFaces
+  bind:showVertices={showQubits}
+  bind:showEdges
+  bind:showLabels
+>
+  {#snippet subtitle()}CSS planar code &middot; X/Z plaquettes{/snippet}
+  {#snippet controls()}
     <label
       >Stabiliser type
       <select bind:value={pattern}>
@@ -98,19 +106,15 @@
     <label>Columns (n)<input type="number" min="1" max="20" bind:value={cols} /></label>
     <label>Rows (m)<input type="number" min="1" max="20" bind:value={rows} /></label>
     <label>Cell size<input type="number" min="10" max="120" step="5" bind:value={cellSize} /></label>
-    <label class="chk"><input type="checkbox" bind:checked={showFaces} />Faces</label>
-    <label class="chk"><input type="checkbox" bind:checked={showQubits} />Data qubits</label>
-    <label class="chk"><input type="checkbox" bind:checked={showEdges} />Edges</label>
-    <label class="chk"><input type="checkbox" bind:checked={showLabels} />Labels</label>
+  {/snippet}
+  {#snippet extraChecks()}
     <label class="chk"><input type="checkbox" bind:checked={rotated} />Rotated 45&deg;</label>
-    <fieldset class="colors">
-      <legend>Stabilizer colors</legend>
-      <label class="color">Z<input type="color" bind:value={colors.Z} /></label>
-      <label class="color">X<input type="color" bind:value={colors.X} /></label>
-    </fieldset>
-  </aside>
-
-  <LatticeView viewBox={lattice.view.viewBox} {name}>
+  {/snippet}
+  {#snippet colorPickers()}
+    <label class="color">Z<input type="color" bind:value={colors.Z} /></label>
+    <label class="color">X<input type="color" bind:value={colors.X} /></label>
+  {/snippet}
+  {#snippet children(qubits)}
     <g transform={groupTransform}>
       <!-- boundary half-circle markers -->
       {#if showEdges}
@@ -180,11 +184,7 @@
         {/each}
       {/if}
       <!-- data qubits -->
-      {#if showQubits}
-        {#each lattice.qubits as q (q.id)}
-          <circle class="diagram-qubit" cx={q.x} cy={q.y} r={cellSize * 0.09} fill="var(--fg)" />
-        {/each}
-      {/if}
+      {#if showQubits}{@render qubits(lattice.qubits, cellSize * 0.09)}{/if}
       <!-- XZZX: every plaquette is X-Z-Z-X, so the X/Z lives on each data qubit.
            Small per-qubit labels, colour-coded, keep the dense pattern readable. -->
       {#if showLabels && pattern === "xzzx"}
@@ -201,8 +201,8 @@
         {/each}
       {/if}
     </g>
-  </LatticeView>
-</div>
+  {/snippet}
+</DiagramShell>
 
 <style>
   .edge {

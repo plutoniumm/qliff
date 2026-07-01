@@ -1,28 +1,51 @@
 <script lang="ts">
   // The single-shot stabilizer-trajectory stepper (centerpiece of section 03).
-  // Given a tiny circuit and a seed, it replays the EXACT shot the simulator
-  // would: at each noise location it draws threshold = rng()*gamma and walks the
-  // branches' cumulative |w|, lighting the branch that covers the draw. The
-  // Scrubber (owned by the parent) selects how many locations we have revealed.
+  // Self-contained: it owns the seed / error-rate / location controls itself and
+  // builds the tiny rep-code circuit internally, so it lives as one standalone
+  // island in the markdown page. At each noise location it draws
+  // threshold = rng()*gamma and walks the branches' cumulative |w|, lighting the
+  // branch that covers the draw. The Scrubber selects how many locations we have
+  // revealed (0..nLoc; 0 = nothing fired).
   //
   // Everything here is a pure $derived of (circuit, seed, loc): no $effect writes
   // back into state, so there is no risk of effect_update_depth white-screens.
   import { C, withAlpha } from "$lib/colors";
   import Tex from "$lib/Math.svelte";
-  import { runTrajectory, type Circuit, type Branch, type NoiseFire } from "./channels";
+  import Slider from "$lib/Slider.svelte";
+  import Scrubber from "$lib/Scrubber.svelte";
+  import { runTrajectory, makeChannel, type Circuit, type Branch, type NoiseFire } from "./channels";
 
-  let {
-    circuit,
-    seed,
-    loc = $bindable(0),
-    qubitLabels,
-  }: {
-    circuit: Circuit;
-    seed: number;
-    // how many noise locations have been revealed (0..nLoc). 0 = nothing fired.
-    loc?: number;
-    qubitLabels?: string[];
-  } = $props();
+  // controls owned by this island (previously the parent page's prose-level
+  // state -- moved in so the interactive is self-contained in the markdown page).
+  let seed = $state(7);
+  let p = $state(0.18);
+  let loc = $state(0);
+
+  const qubitLabels = ["q0", "q1", "q2", "q3"];
+
+  // A small rep-code-style round: 4 data qubits in a line, each gets a
+  // DEPOLARIZE1 location after preparation; 3 Z-checks read parities of
+  // neighbours. We only need the noise locations to show a trajectory.
+  function buildRepCircuit(nData: number, rate: number): Circuit {
+    const instructions = [];
+    for (let q = 0; q < nData; q += 1) {
+      instructions.push({
+        type: "noise" as const,
+        channel: makeChannel("DEPOLARIZE1", rate, [q]),
+        label: `DEPOLARIZE1 q${q}`,
+      });
+    }
+    // Z-checks between neighbours -> detectors over (q, q+1).
+    const detectors: number[][] = [];
+    for (let q = 0; q < nData - 1; q += 1) {
+      detectors.push([q, q + 1]);
+    }
+    // logical observable = parity of all data qubits.
+    const observables = [Array.from({ length: nData }, (_, q) => q)];
+
+    return { numQubits: nData, instructions, detectors, observables };
+  }
+  const circuit = $derived<Circuit>(buildRepCircuit(4, p));
 
   // The whole shot, computed once from (circuit, seed). The Scrubber only
   // changes WHICH part we display, not the underlying sampled shot.
@@ -102,6 +125,12 @@
 </script>
 
 <div class="traj">
+  <div class="traj-controls">
+    <Slider bind:value={seed} min={0} max={9999} step={1} label="seed" />
+    <Slider bind:value={p} min={0.02} max={0.4} step={0.005} label="error rate p" format={(v) => v.toFixed(3)} />
+    <Scrubber bind:value={loc} min={0} max={nLoc} label="location" />
+  </div>
+
   <!-- the circuit strip with noise locations -->
   <svg viewBox={`0 0 ${W} ${stripH}`} class="strip" role="img" aria-label="circuit">
     {#each Array(nQ) as _, q (q)}
@@ -219,6 +248,13 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
+  }
+
+  .traj-controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 14px;
+    align-items: end;
   }
 
   .strip {

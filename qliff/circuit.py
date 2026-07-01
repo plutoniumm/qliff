@@ -6,7 +6,28 @@ from typing import Self
 from ._types import Instruction, Targets
 from .noise.channel import NOISE_FACTORIES, Channel, make_channel
 from .pauli import PauliString
-from .simulator import CLIFFORD_OPS, GATE_OPCODE, GATES_1, GATES_2, MEAS, Simulator
+from .simulator import (
+    CLIFFORD_OPS,
+    COMPOSITE_GATES,
+    GATE_OPCODE,
+    GATES_1,
+    GATES_2,
+    MEAS,
+    Simulator,
+)
+
+
+def _lower_gates(name: str, targets: Targets) -> list[tuple[int, int, int]]:
+    # Lower a Clifford gate to (opcode, a, b) triples: one per 1Q target, or one
+    # per (control, target) pair for a 2Q gate. Shared by Circuit.run and the
+    # Sampler compilers so the pair-walk lives in one place.
+    op = GATE_OPCODE[name]
+    if name in GATES_2:
+        return [
+            (op, targets[k], targets[k + 1]) for k in range(0, len(targets), 2)
+        ]
+
+    return [(op, q, 0) for q in targets]
 
 
 class Circuit:
@@ -76,33 +97,29 @@ class Circuit:
     # --- basis measurements / composite gates (sugar; expand to primitives, so
     # run/sample/DEM handle them with no extra machinery) ---
 
+    def _composite(self, name: str, q: tuple) -> Self:
+        # Append a COMPOSITE_GATES primitive sequence per qubit.
+        for x in q:
+            for prim in COMPOSITE_GATES[name]:
+                self.append(prim, x)
+
+        return self
+
     def SX(self, *q: int) -> Self:
         # sqrt-X = H S H
-        for x in q:
-            self.append("H", x).append("S", x).append("H", x)
-
-        return self
+        return self._composite("SX", q)
 
     def SX_DAG(self, *q: int) -> Self:
-        for x in q:
-            self.append("H", x).append("S_DAG", x).append("H", x)
-
-        return self
+        # sqrt-X dagger = H S_DAG H
+        return self._composite("SX_DAG", q)
 
     def MX(self, *q: int) -> Self:
         # measure in X basis (H; M; H) -- one record per qubit
-        for x in q:
-            self.append("H", x).append("M", x).append("H", x)
-
-        return self
+        return self._composite("MX", q)
 
     def MY(self, *q: int) -> Self:
         # measure in Y basis (S_DAG; H; M; H; S)
-        for x in q:
-            self.append("S_DAG", x).append("H", x).append("M", x)
-            self.append("H", x).append("S", x)
-
-        return self
+        return self._composite("MY", q)
 
     @property
     def is_pauli(self) -> bool:
@@ -120,14 +137,8 @@ class Circuit:
         batch: list[tuple[int, int, int]] = []
 
         for name, targets, _arg in self.instructions:
-            if name in GATES_1:
-                op = GATE_OPCODE[name]
-                batch.extend((op, q, 0) for q in targets)
-            elif name in GATES_2:
-                op = GATE_OPCODE[name]
-                batch.extend(
-                    (op, targets[k], targets[k + 1]) for k in range(0, len(targets), 2)
-                )
+            if name in GATES_1 or name in GATES_2:
+                batch.extend(_lower_gates(name, targets))
             elif name in MEAS:
                 if batch:
                     sim.run_ops(batch)
