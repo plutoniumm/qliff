@@ -11,6 +11,30 @@
    hues and the light-mode overrides below still win by specificity. */
 @import "../../shared/qui/palette.css";
 
+/* Domain tokens for pure-CSS figures authored in the markdown BODY -- the q-*
+   components (shared/qui/components.css) used OUTSIDE a .qtut island, e.g. the
+   static figures in the tutorial .md pages. The .qtut block below defines these
+   only inside the interactive pane; mirror them here at :root so a plain-markdown
+   figure resolves var(--ok)/var(--bad)/var(--y)/var(--muted)/... and follows the
+   VitePress light/dark toggle. Inside a .qtut island the more-specific rules below
+   still win, so the interactive explainers are unaffected. */
+:root {
+  --muted: var(--vp-c-text-2);
+  --faint: var(--vp-c-text-3);
+  --line: var(--vp-c-divider);
+  --data: var(--vp-c-text-3);
+  --y: #c98a00;
+  --ok: #1aa06a;
+  --bad: #e03a3a;
+  --defect: #c98a00;
+}
+.dark {
+  --y: #ffd166;
+  --ok: #5be8b0;
+  --bad: #ff6b6b;
+  --defect: #ffd166;
+}
+
 .qtut {
   /* SURFACES + INK map onto VitePress' own tokens, so the explainer follows the
      docs' light/dark toggle and sits on the same backgrounds as the prose pages.

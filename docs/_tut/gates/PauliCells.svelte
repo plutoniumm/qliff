@@ -34,76 +34,35 @@
   }
 </script>
 
-<div class="cells" class:compact>
-  <span class="sign mono" style="color:{p.sign === 0 ? C.ok : C.bad}">
+<!-- Reskinned onto the shared qui .q-cells component (components.css, loaded
+     globally). Only the per-Pauli colors (letter via --c, x/z bits, sign) and
+     the two variants the shared class lacks (.hl highlight, .compact) stay
+     local; the duplicated layout CSS is gone. -->
+<div class="q-cells" class:compact>
+  <span class="q-sign mono" style="color:{p.sign === 0 ? C.ok : C.bad}">
     {p.sign === 0 ? "+" : "−"}
   </span>
   {#each Array(n) as _, i (i)}
     {@const c = pauliChar(p.x[i], p.z[i])}
-    <div class="cell" class:hl={highlight.includes(i)}>
-      <span class="letter mono" style="color:{letterColor(c)}">{c}</span>
-      <div class="bits mono">
-        <span class="bit" style="color:{p.x[i] ? C.x : C.faint}">x={p.x[i] ? 1 : 0}</span>
-        <span class="bit" style="color:{p.z[i] ? C.z : C.faint}">z={p.z[i] ? 1 : 0}</span>
-      </div>
-      <span class="qlbl mono">{labels?.[i] ?? `q${i}`}</span>
+    <div class="q-cell" class:hl={highlight.includes(i)} style="--c:{letterColor(c)}">
+      <b class="mono">{c}</b>
+      <span class="q-bits">
+        <span style="color:{p.x[i] ? C.x : C.faint}">x={p.x[i] ? 1 : 0}</span>
+        <span style="color:{p.z[i] ? C.z : C.faint}">z={p.z[i] ? 1 : 0}</span>
+      </span>
+      <small>{labels?.[i] ?? `q${i}`}</small>
     </div>
   {/each}
 </div>
 
 <style>
-  .cells {
-    display: flex;
-    align-items: stretch;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .sign {
-    align-self: center;
-    font-size: 30px;
-    font-weight: 700;
-    width: 18px;
-    text-align: center;
-  }
-
-  .cell {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 3px;
-    padding: 8px 12px;
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    background: color-mix(in srgb, var(--bg-2) 55%, transparent);
-    min-width: 58px;
-  }
-
-  .cell.hl {
+  /* variants the shared .q-cell has no equivalent for */
+  .q-cell.hl {
     border-color: color-mix(in srgb, var(--accent) 65%, transparent);
     background: var(--grad-soft);
   }
 
-  .letter {
-    font-size: 26px;
-    font-weight: 700;
-    line-height: 1;
-  }
-
-  .compact .letter {
+  .q-cells.compact > .q-cell > b {
     font-size: 20px;
-  }
-
-  .bits {
-    display: flex;
-    gap: 8px;
-    font-size: 11.5px;
-  }
-
-  .qlbl {
-    font-size: 10.5px;
-    color: var(--faint);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
   }
 </style>

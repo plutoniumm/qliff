@@ -1,0 +1,168 @@
+/* qui -- pure-CSS component library
+ *
+ * Framework-agnostic HTML + CSS components for the qliff tutorials. Two uses:
+ *   1. author a STATIC figure directly in markdown (no Svelte island), e.g.
+ *      <ul class="q-bars"><li style="--v:.7;--c:var(--x)"><b>X</b><i>0.70</i></li></ul>
+ *   2. reuse the classes INSIDE an interactive Svelte island so every island
+ *      stops re-implementing its own bars/cells/legend markup.
+ *
+ * No JavaScript. Colors come from the shared palette tokens (--x/--z/--accent,
+ * global via palette.css); chrome tokens fall back to VitePress' own vars so the
+ * components look right in the native (light) doc theme AND inside a .qtut pane.
+ */
+
+:root {
+  --q-line: var(--line, var(--vp-c-divider, #e2e2e3));
+  --q-muted: var(--muted, var(--vp-c-text-2, #67676c));
+  --q-faint: var(--faint, var(--vp-c-text-3, #98989f));
+  --q-track: color-mix(in srgb, var(--q-line) 55%, transparent);
+  --q-radius: 8px;
+}
+
+/* --- figure: caption + body + optional note ------------------------------ */
+.q-fig {
+  margin: 1.4rem 0;
+}
+.q-fig > .q-fig-title {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+.q-fig > .q-fig-note {
+  color: var(--q-muted);
+  font-size: 0.85em;
+  font-style: italic;
+  margin-top: 0.45rem;
+}
+
+/* --- legend: inline color swatches --------------------------------------- */
+.q-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+  font-size: 0.85em;
+  color: var(--q-muted);
+  margin: 0.6rem 0;
+  padding: 0;
+  list-style: none;
+}
+.q-legend > * {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.q-legend > *::before {
+  content: "";
+  width: 0.8em;
+  height: 0.8em;
+  border-radius: 3px;
+  background: var(--c, var(--accent));
+}
+
+/* --- bars: horizontal value bars from a list ----------------------------- */
+/* each <li> sets --v (0..1 fill fraction) and optionally --c (bar color).    */
+.q-bars {
+  list-style: none;
+  margin: 0.8rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.q-bars > li {
+  display: grid;
+  grid-template-columns: minmax(3.5rem, max-content) 1fr minmax(2.5rem, max-content);
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 0.85em;
+}
+.q-bars > li > b {
+  font-weight: 500;
+  text-align: right;
+}
+.q-bars > li > .q-track {
+  height: 0.85rem;
+  background: var(--q-track);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.q-bars > li > .q-track::before {
+  content: "";
+  display: block;
+  height: 100%;
+  width: calc(clamp(0, var(--v, 0), 1) * 100%);
+  background: var(--c, var(--accent));
+  border-radius: inherit;
+}
+.q-bars > li > i {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  color: var(--q-muted);
+  text-align: right;
+}
+
+/* --- gauge: a labeled native <meter> ------------------------------------- */
+.q-gauge {
+  display: grid;
+  grid-template-columns: minmax(4rem, max-content) 1fr minmax(2.5rem, max-content);
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0.6rem 0;
+  font-size: 0.85em;
+}
+.q-gauge > meter {
+  width: 100%;
+  height: 0.85rem;
+}
+
+/* --- cells: a row of Pauli cells (letter + x/z bits + qubit label) -------- */
+.q-cells {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.55rem;
+  margin: 0.9rem 0;
+}
+.q-cells > .q-sign {
+  align-self: center;
+  font-size: 1.7rem;
+  font-weight: 700;
+}
+.q-cells > .q-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 3.4rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--q-line);
+  border-radius: var(--q-radius);
+}
+.q-cells > .q-cell > b {
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--c, var(--q-muted));
+}
+.q-cells > .q-cell > .q-bits {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  font-family: var(--vp-font-family-mono, monospace);
+}
+.q-cells > .q-cell > small {
+  font-size: 0.64rem;
+  color: var(--q-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* --- chip: a small inline pill ------------------------------------------- */
+.q-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.55rem;
+  border: 1px solid var(--q-line);
+  border-radius: 999px;
+  font-size: 0.8em;
+  color: var(--c, var(--q-muted));
+}

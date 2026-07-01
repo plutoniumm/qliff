@@ -36,22 +36,22 @@
   <span>weighted estimate <b style="color:{C.accent}">{pct(wResult.ler)}</b></span>
   <span>± stderr <b style="color:{wGamma > 2.5 ? C.bad : C.fg}">{pct(wResult.stderr)}</b></span>
 </div>
-<div class="cost">
-  <div class="cost-bar">
-    <span class="cost-lbl">Pauli (binomial)</span>
-    <div class="bar"><div class="fill" style="width:{Math.min(100, (binomShotsNeeded / weightedShotsNeeded) * 100)}%; background:{C.ok}"></div></div>
-    <span class="mono cost-n">{binomShotsNeeded.toLocaleString()} shots</span>
-  </div>
-  <div class="cost-bar">
-    <span class="cost-lbl">coherent (γ={wGamma.toFixed(1)})</span>
-    <div class="bar"><div class="fill" style="width:100%; background:{C.accent3}"></div></div>
-    <span class="mono cost-n">{weightedShotsNeeded.toLocaleString()} shots</span>
-  </div>
-  <p class="cost-note">
-    Shots to reach a 10% relative error bar. Weighted variance scales like
-    γ², so the budget grows roughly γ²-fold.
-  </p>
-</div>
+<ul class="q-bars">
+  <li style="--v:{Math.min(1, binomShotsNeeded / weightedShotsNeeded)}; --c:{C.ok}">
+    <b>Pauli (binomial)</b>
+    <span class="q-track"></span>
+    <i>{binomShotsNeeded.toLocaleString()} shots</i>
+  </li>
+  <li style="--v:1; --c:{C.accent3}">
+    <b>coherent (γ={wGamma.toFixed(1)})</b>
+    <span class="q-track"></span>
+    <i>{weightedShotsNeeded.toLocaleString()} shots</i>
+  </li>
+</ul>
+<p class="cost-note">
+  Shots to reach a 10% relative error bar. Weighted variance scales like
+  γ², so the budget grows roughly γ²-fold.
+</p>
 
 <style>
   .prose-controls {
@@ -73,46 +73,10 @@
     font-family: var(--font-mono);
     font-weight: 700;
   }
-  .cost {
-    margin-top: 18px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .cost-bar {
-    display: grid;
-    grid-template-columns: 150px 1fr auto;
-    align-items: center;
-    gap: 12px;
-  }
-  .cost-lbl {
-    font-size: 13px;
-    color: var(--muted);
-  }
-  .bar {
-    height: 12px;
-    border-radius: 99px;
-    background: color-mix(in srgb, var(--bg-2) 70%, transparent);
-    border: 1px solid var(--line);
-    overflow: hidden;
-  }
-  .fill {
-    height: 100%;
-    border-radius: 99px;
-    transition: width var(--dur) var(--ease-out);
-  }
-  .cost-n {
-    font-size: 12.5px;
-    color: var(--fg);
-    white-space: nowrap;
-  }
   .cost-note {
     margin: 4px 0 0;
     font-size: 13px;
     color: var(--faint);
     line-height: 1.5;
-  }
-  .mono {
-    font-family: var(--font-mono);
   }
 </style>

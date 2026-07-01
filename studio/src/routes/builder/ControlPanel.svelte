@@ -20,20 +20,12 @@
     CompileResponse,
     LatticeSpec,
   } from "$lib/schema";
-
-  // Display names for the three stabiliser-pattern knobs (defaults css/Z/even).
-  const PATTERN_LABEL: Record<SurfacePattern, string> = {
-    css: "CSS",
-    xzzx: "XZZX",
-  };
-  const START_LABEL: Record<SurfaceStart, string> = {
-    Z: "EVEN-Z (Z-dominated)",
-    X: "EVEN-X (X-dominated)",
-  };
-  const EDGE_LABEL: Record<SurfaceEdge, string> = {
-    even: "Even boundary",
-    odd: "Odd boundary",
-  };
+  import {
+    PATTERN_OPTIONS,
+    START_OPTIONS,
+    EDGE_OPTIONS,
+    type VariantOption,
+  } from "$lib/variants";
 
   // Group the code families under titled + subtitled headers in the picker. The
   // families themselves come from /api/templates (availability is backend-driven);
@@ -136,24 +128,40 @@
   // else is a template family.
   let code = $state<string>("");
   let distance = $state(3);
-  // Stabiliser-pattern knobs for the surface families; reset to the css/Z/even
-  // default whenever the family changes (every family supports it).
-  let pattern = $state<SurfacePattern>("css");
-  let start = $state<SurfaceStart>("Z");
-  let edge = $state<SurfaceEdge>("even");
+  // Stabiliser-pattern knobs for the surface families, held in one record so the
+  // selector loop below can bind variant[key]; reset to the css/Z/even default
+  // whenever the family changes (every family supports it).
+  let variant = $state<Record<"pattern" | "start" | "edge", SurfacePattern | SurfaceStart | SurfaceEdge>>({
+    pattern: "css",
+    start: "Z",
+    edge: "even",
+  });
 
   let isFreeform = $derived(code === "freeform");
   let isTemplate = $derived(code !== "" && code !== "freeform");
   let codeGroups = $derived(groupTemplates(templates));
 
-  // The picked family's metadata + the options it offers along each knob axis. One
-  // option => no selector to show for that axis.
+  // The picked family's metadata.
   let codeTemplate = $derived<TemplateInfo | null>(
     templates.find((t) => t.family === code) ?? null,
   );
-  let patternOptions = $derived<SurfacePattern[]>(codeTemplate?.patterns ?? ["css"]);
-  let startOptions = $derived<SurfaceStart[]>(codeTemplate?.starts ?? ["Z"]);
-  let edgeOptions = $derived<SurfaceEdge[]>(codeTemplate?.edges ?? ["even"]);
+
+  // Keep only the canonical options this family offers along an axis (defaulting to
+  // the first when it lists none); one option => that axis's selector stays hidden.
+  function offered<T>(all: VariantOption<T>[], allowed: T[] | undefined): VariantOption<T>[] {
+    if (allowed === undefined) {
+      return [all[0]];
+    }
+
+    return all.filter((o) => allowed.includes(o.value));
+  }
+
+  // One config row per knob axis, driving a single selector loop in the template.
+  let variantAxes = $derived([
+    { key: "pattern" as const, label: "Stabiliser type", options: offered(PATTERN_OPTIONS, codeTemplate?.patterns) },
+    { key: "start" as const, label: "Colouring", options: offered(START_OPTIONS, codeTemplate?.starts) },
+    { key: "edge" as const, label: "Boundary", options: offered(EDGE_OPTIONS, codeTemplate?.edges) },
+  ]);
 
   // Tell Builder which source is active + at what distance so it can draw the
   // selected code on the always-visible canvas. This is fired IMPERATIVELY from
@@ -168,9 +176,7 @@
   // fall back to css_z), then redraw the canvas. Variant itself doesn't change the
   // geometry, so it never needs to flow through onspecchange.
   function onCodeChange(): void {
-    pattern = "css";
-    start = "Z";
-    edge = "even";
+    variant = { pattern: "css", start: "Z", edge: "even" };
     emitSpec();
   }
 
@@ -280,9 +286,9 @@
       template: {
         family: code as CodeFamily,
         distance,
-        pattern,
-        start,
-        edge,
+        pattern: variant.pattern as SurfacePattern,
+        start: variant.start as SurfaceStart,
+        edge: variant.edge as SurfaceEdge,
       },
     };
   }
@@ -300,9 +306,9 @@
     const sig = JSON.stringify({
       code,
       distance,
-      pattern,
-      start,
-      edge,
+      pattern: variant.pattern,
+      start: variant.start,
+      edge: variant.edge,
       rounds,
       channel,
       arg: channelInfo?.arg,
@@ -407,36 +413,18 @@
         Distance
         <input type="number" min="2" step="1" bind:value={distance} oninput={emitSpec} />
       </label>
-      {#if patternOptions.length > 1}
-        <label>
-          Stabiliser type
-          <select bind:value={pattern}>
-            {#each patternOptions as v (v)}
-              <option value={v}>{PATTERN_LABEL[v]}</option>
-            {/each}
-          </select>
-        </label>
-      {/if}
-      {#if startOptions.length > 1}
-        <label>
-          Colouring
-          <select bind:value={start}>
-            {#each startOptions as v (v)}
-              <option value={v}>{START_LABEL[v]}</option>
-            {/each}
-          </select>
-        </label>
-      {/if}
-      {#if edgeOptions.length > 1}
-        <label>
-          Boundary
-          <select bind:value={edge}>
-            {#each edgeOptions as v (v)}
-              <option value={v}>{EDGE_LABEL[v]}</option>
-            {/each}
-          </select>
-        </label>
-      {/if}
+      {#each variantAxes as axis (axis.key)}
+        {#if axis.options.length > 1}
+          <label>
+            {axis.label}
+            <select bind:value={variant[axis.key]}>
+              {#each axis.options as o (o.value)}
+                <option value={o.value}>{o.label}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+      {/each}
     {:else if isFreeform}
       <p class="hint">
         {#if freeform.sq > 0}

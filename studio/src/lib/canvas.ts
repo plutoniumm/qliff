@@ -11,7 +11,7 @@
 
 import type { Tile, TileKind, LatticeSpec, Boundary } from "$lib/schema";
 import type { Point } from "$lib/geometry";
-import { rotateOffset } from "$lib/geometry";
+import { rotateOffset, getBounds } from "$lib/geometry";
 
 // Re-export Point so existing importers of $lib/canvas (e.g. Canvas.svelte)
 // keep getting it from here unchanged; the definition now lives in $lib/geometry.
@@ -202,24 +202,16 @@ function pointInPolygon(p: Point, poly: Point[]): boolean {
   return inside;
 }
 
+// Axis-aligned box of a polygon in {x,y,w,h} form -- the same bounds getBounds
+// computes, re-shaped from {minX..maxY} for the canvas hit-test rectangles.
 function bbox(poly: Point[]): Rect {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-
-  for (const v of poly) {
-    minX = Math.min(minX, v.x);
-    minY = Math.min(minY, v.y);
-    maxX = Math.max(maxX, v.x);
-    maxY = Math.max(maxY, v.y);
-  }
+  const b = getBounds(poly);
 
   return {
-    x: minX,
-    y: minY,
-    w: maxX - minX,
-    h: maxY - minY,
+    x: b.minX,
+    y: b.minY,
+    w: b.maxX - b.minX,
+    h: b.maxY - b.minY,
   };
 }
 

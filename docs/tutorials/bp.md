@@ -13,7 +13,6 @@ import PriorGauge from '../_tut/bp/PriorGauge.svelte'
 import DanceDemo from '../_tut/bp/DanceDemo.svelte'
 import BeliefsDemo from '../_tut/bp/BeliefsDemo.svelte'
 import StuckDemo from '../_tut/bp/StuckDemo.svelte'
-import OsdPanel from '../_tut/bp/OsdPanel.svelte'
 </script>
 
 ## Why another decoder?
@@ -198,16 +197,28 @@ Notice $e_0$ and $e_1$ always carry the *identical* posterior -- and it keeps fl
 2. **Solve a full-rank core exactly.** Walk that ordered list and Gaussian-eliminate over $\mathbb{F}_2$ to pull out a most-reliable set of independent pivot columns $\mathcal{P}$, then solve that square subsystem $H_{\mathcal{P}}\,\hat e_{\mathcal{P}} \;=\; s \pmod 2$ (free columns set to 0). This forces a recovery that *exactly* reproduces the syndrome -- no more oscillation.
 3. **Search small corrections (order 7).** Flip up to $7$ of the least-reliable free columns, re-solve, and keep the *lowest-weight* consistent answer found.
 
-**BP + OSD**
-
-<SvelteIsland :component="OsdPanel" />
-
-*OSD applied to BP's stuck output. Columns are listed most-reliable-first; the pivot core is solved exactly to force a syndrome-matching recovery.*
-
-Legend:
-- pivot column (solved exactly)
-- free column
-- syndrome-matching recovery
+<div class="qtut">
+<figure class="q-fig">
+  <div class="q-fig-title">BP + OSD</div>
+  <p><strong>1 -- reliability order.</strong> Columns most-reliable-first; bar length is the posterior reliability |L| (heat-capped at 5). BP is sure e2, e3 stayed quiet but cannot break the e0/e1 tie.</p>
+  <ul class="q-bars">
+    <li style="--v:.91;--c:var(--x)"><b>e2 <span class="q-chip" style="--c:var(--accent)">pivot</span></b><span class="q-track"></span><i>4.56</i></li>
+    <li style="--v:.91;--c:var(--x)"><b>e3 <span class="q-chip" style="--c:var(--muted)">free</span></b><span class="q-track"></span><i>4.56</i></li>
+    <li style="--v:.17;--c:var(--z)"><b>e0 <span class="q-chip" style="--c:var(--accent)">pivot</span></b><span class="q-track"></span><i>0.83</i></li>
+    <li style="--v:.17;--c:var(--z)"><b>e1 <span class="q-chip" style="--c:var(--muted)">free</span></b><span class="q-track"></span><i>0.83</i></li>
+  </ul>
+  <p><strong>2 -- solved recovery.</strong> Solve the pivot core exactly (free columns = 0), then search order-7 flips of the least-reliable free columns.</p>
+  <p>order-0 (free = 0): <code>1000</code>, weight 1</p>
+  <p>after order-7 search: <code>1000</code>, weight 1</p>
+  <p><span class="q-chip" style="--c:var(--ok)">reproduces syndrome 110</span> BP + OSD recovers <code>e0</code> where plain BP spun forever.</p>
+  <ul class="q-legend">
+    <li style="--c:var(--accent)">pivot column (solved exactly)</li>
+    <li style="--c:var(--muted)">free column</li>
+    <li style="--c:var(--ok)">syndrome-matching recovery</li>
+  </ul>
+  <div class="q-fig-note">OSD applied to BP's stuck output. Columns are listed most-reliable-first; the pivot core is solved exactly to force a syndrome-matching recovery.</div>
+</figure>
+</div>
 
 ::: tip Why qliff ships BP+OSD
 OSD turns BP's *almost-an-answer* into a guaranteed syndrome-consistent, low-weight recovery. Crucially, BP+OSD works on the **general bipartite graph** -- including *non-graphlike* codes (colour codes, dense LDPC) where a detector touches more than two errors and MWPM has no graph to match. That generality is the whole reason it sits alongside matching in the decoder zoo.

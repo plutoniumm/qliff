@@ -30,18 +30,12 @@
   import LerPlot from "./LerPlot.svelte";
   import type { TileKind } from "$lib/schema";
 
-  // Hardcoded fallbacks matching the API contract, so the UI is never blocked
-  // when an endpoint 404s during parallel backend development.
+  // Minimal same-shape fallbacks (one template / channel / decoder). Production
+  // serves the SPA and /api from one origin (see api.ts), so if the SPA loaded
+  // then /api is up -- these only cushion a transient blip, keeping the UI
+  // usable-but-sparse until onMount's Promise.allSettled swaps in the real lists.
+  // The full catalogue lives in schema.ts + server/schema.py, not a third copy here.
   const FALLBACK_TEMPLATES: TemplateInfo[] = [
-    {
-      family: "repetition",
-      label: "Repetition",
-      min_distance: 3,
-      decoders: ["mwpm", "bposd", "mld", "tn"],
-      patterns: ["css"],
-      starts: ["Z"],
-      edges: ["even"],
-    },
     {
       family: "rotated_surface",
       label: "Rotated surface",
@@ -50,51 +44,6 @@
       patterns: ["css", "xzzx"],
       starts: ["Z", "X"],
       edges: ["even", "odd"],
-    },
-    {
-      family: "unrotated_surface",
-      label: "Unrotated surface",
-      min_distance: 3,
-      decoders: ["mwpm", "bposd", "mld", "tn"],
-      patterns: ["css", "xzzx"],
-      starts: ["Z", "X"],
-      edges: ["even"],
-    },
-    {
-      family: "toric",
-      label: "Toric",
-      min_distance: 3,
-      decoders: ["mwpm", "bposd", "mld", "tn"],
-      patterns: ["css"],
-      starts: ["Z"],
-      edges: ["even"],
-    },
-    {
-      family: "hex_color",
-      label: "Hexagonal color",
-      min_distance: 3,
-      decoders: ["color", "bposd", "mld", "tn"],
-      patterns: ["css"],
-      starts: ["Z"],
-      edges: ["even"],
-    },
-    {
-      family: "triangular",
-      label: "Triangular",
-      min_distance: 3,
-      decoders: ["color", "bposd", "mld", "tn"],
-      patterns: ["css"],
-      starts: ["Z"],
-      edges: ["even"],
-    },
-    {
-      family: "kagome",
-      label: "Kagome",
-      min_distance: 3,
-      decoders: ["bposd", "mld", "tn"],
-      patterns: ["css"],
-      starts: ["Z"],
-      edges: ["even"],
     },
   ];
 
@@ -106,55 +55,6 @@
       arg: "p",
       note: "Single-qubit depolarizing channel at rate p.",
     },
-    {
-      name: "DEPOLARIZE2",
-      label: "Depolarize (2q)",
-      is_pauli: true,
-      arg: "p",
-      note: "Two-qubit depolarizing channel at rate p.",
-    },
-    {
-      name: "X_ERROR",
-      label: "X error",
-      is_pauli: true,
-      arg: "p",
-      note: "Bit-flip (X) with probability p.",
-    },
-    {
-      name: "Z_ERROR",
-      label: "Z error",
-      is_pauli: true,
-      arg: "p",
-      note: "Phase-flip (Z) with probability p.",
-    },
-    {
-      name: "PAULI_CHANNEL_1",
-      label: "Pauli channel (1q)",
-      is_pauli: true,
-      arg: "vec3",
-      note: "Independent (pX, pY, pZ) Pauli error probabilities.",
-    },
-    {
-      name: "RZ",
-      label: "Coherent RZ",
-      is_pauli: false,
-      arg: "theta",
-      note: "Coherent over-rotation about Z by θ radians.",
-    },
-    {
-      name: "RX",
-      label: "Coherent RX",
-      is_pauli: false,
-      arg: "theta",
-      note: "Coherent over-rotation about X by θ radians.",
-    },
-    {
-      name: "AMPLITUDE_DAMP",
-      label: "Amplitude damping",
-      is_pauli: false,
-      arg: "p",
-      note: "Energy relaxation (T1) with damping probability p.",
-    },
   ];
 
   const FALLBACK_DECODERS: DecoderInfo[] = [
@@ -163,36 +63,6 @@
       label: "MWPM",
       pauli_only: true,
       note: "Minimum-weight perfect matching on the detector graph.",
-    },
-    {
-      name: "bposd",
-      label: "BP+OSD",
-      pauli_only: true,
-      note: "Belief propagation with ordered statistics decoding.",
-    },
-    {
-      name: "mld",
-      label: "MLD (exact TN)",
-      pauli_only: true,
-      note: "Exact maximum-likelihood decoding via tensor-network contraction.",
-    },
-    {
-      name: "tn",
-      label: "TN (truncated)",
-      pauli_only: true,
-      note: "Tensor-network decoder with bond-dimension truncation.",
-    },
-    {
-      name: "coherent",
-      label: "Coherent TN",
-      pauli_only: false,
-      note: "Tensor-network decoder for non-Pauli / coherent noise.",
-    },
-    {
-      name: "color",
-      label: "Color",
-      pauli_only: true,
-      note: "Dedicated color-code decoder (restriction / projection based).",
     },
   ];
 

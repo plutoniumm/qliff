@@ -5,17 +5,19 @@
 
 import { getBounds, getBBox, rotatePoint } from "$lib/geometry";
 import type { Point, Bounds, ViewBox } from "$lib/geometry";
+import type { SurfacePattern, SurfaceStart, SurfaceEdge } from "$lib/variants";
 
 // Stabiliser face type: X / Z plaquettes for the CSS colourings, or the single mixed
 // "XZZX" face shared by every plaquette in the XZZX code.
 export type FaceType = "X" | "Z" | "XZZX";
 
-// Diagram stabiliser-pattern knobs, mirroring the runnable surface variants:
+// Diagram stabiliser-pattern knobs alias the runnable surface-variant unions
+// (schema.ts, via $lib/variants) so the diagram can never drift from the builder:
 // pattern (css vs single-type xzzx), start (the X/Z colouring: EVEN-Z puts Z on
 // (r+c) even, EVEN-X is its dual), edge (which alternating boundary set is marked).
-export type DiagramPattern = "css" | "xzzx";
-export type DiagramStart = "Z" | "X";
-export type DiagramEdge = "even" | "odd";
+export type DiagramPattern = SurfacePattern;
+export type DiagramStart = SurfaceStart;
+export type DiagramEdge = SurfaceEdge;
 
 export interface Edge {
   path: string;

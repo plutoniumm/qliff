@@ -6,6 +6,10 @@ import type { Theme } from 'vitepress';
 
 import 'katex/dist/katex.min.css';
 import '../../_tut/theme.css';
+// Pure-CSS component library (q-fig / q-legend / q-bars / q-cells / q-gauge /
+// q-chip): lets static figures be authored as plain HTML in markdown -- no
+// Svelte island -- and gives the interactive islands shared figure styling.
+import '../../../shared/qui/components.css';
 
 import SvelteIsland from './SvelteIsland.vue';
 

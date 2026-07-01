@@ -108,6 +108,13 @@ export function rotatePoint(p: Point, cx: number, cy: number, deg: number): Poin
   return rotateOffset(p.x - cx, p.y - cy, cx, cy, rad);
 }
 
+// Serialise a point cloud to an SVG "x,y x,y ..." string for polygon/polyline
+// points (and the same path format the diagram builders emit). Single source so
+// the stringifier is not re-spelled at each call site.
+export function pointsToString(points: Point[]): string {
+  return points.map((p) => `${p.x},${p.y}`).join(" ");
+}
+
 // Quantise to 1/100 so floating-point jitter does not break dedupe keys.
 const round = (v: number) => Math.round(v * 100);
 

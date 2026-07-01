@@ -11,6 +11,7 @@
     DiagramEdge,
     FaceType,
   } from "./rect";
+  import { PATTERN_OPTIONS, START_OPTIONS, EDGE_OPTIONS } from "$lib/variants";
   import DiagramShell, { PHASE_HUES } from "./DiagramShell.svelte";
 
   let cols = $state(5);
@@ -26,19 +27,6 @@
   let pattern = $state<DiagramPattern>("css");
   let start = $state<DiagramStart>("Z");
   let edge = $state<DiagramEdge>("even");
-
-  const PATTERNS: { value: DiagramPattern; label: string }[] = [
-    { value: "css", label: "CSS" },
-    { value: "xzzx", label: "XZZX" },
-  ];
-  const STARTS: { value: DiagramStart; label: string }[] = [
-    { value: "Z", label: "EVEN-Z (Z-dominated)" },
-    { value: "X", label: "EVEN-X (X-dominated)" },
-  ];
-  const EDGES: { value: DiagramEdge; label: string }[] = [
-    { value: "even", label: "Even boundary" },
-    { value: "odd", label: "Odd boundary" },
-  ];
 
   // X/Z stabilizer colours, the Z / X ends of the shared phase-wheel palette (Z = the
   // A/cyan hue, X = the C/magenta hue). XZZX reuses the same two: each plaquette is a
@@ -80,7 +68,7 @@
     <label
       >Stabiliser type
       <select bind:value={pattern}>
-        {#each PATTERNS as v (v.value)}
+        {#each PATTERN_OPTIONS as v (v.value)}
           <option value={v.value}>{v.label}</option>
         {/each}
       </select>
@@ -88,7 +76,7 @@
     <label
       >Colouring
       <select bind:value={start}>
-        {#each STARTS as v (v.value)}
+        {#each START_OPTIONS as v (v.value)}
           <option value={v.value}>{v.label}</option>
         {/each}
       </select>
@@ -97,7 +85,7 @@
       <label
         >Boundary
         <select bind:value={edge}>
-          {#each EDGES as v (v.value)}
+          {#each EDGE_OPTIONS as v (v.value)}
             <option value={v.value}>{v.label}</option>
           {/each}
         </select>

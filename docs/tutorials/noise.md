@@ -15,13 +15,24 @@ import Trajectory from '../_tut/noise/Trajectory.svelte'
 
 A quantum computer with $n$ qubits lives in a space of $2^n$ complex amplitudes. To simulate it the brute-force way you write down all of them -- a *state vector*. That is fine for a toy, and catastrophic for a code: a few thousand qubits would need more numbers than there are atoms in the universe.
 
-**Memory blow-up**
-
-Legend:
-- state vector -- $2^n$ amplitudes
-- stabilizer tableau -- $\sim n^2$ bits
-
-*State-vector amplitudes ($2^n$) versus a stabilizer tableau ($\sim n^2$ bits). Drag the qubit count.*
+<figure class="q-fig">
+  <div class="q-fig-title">Memory blow-up -- state vector vs stabilizer tableau</div>
+  <ul class="q-legend">
+    <li style="--c:var(--bad)">state vector -- 2<sup>n</sup> amplitudes</li>
+    <li style="--c:var(--ok)">stabilizer tableau -- ~n<sup>2</sup> bits</li>
+  </ul>
+  <table>
+    <thead>
+      <tr><th>qubits n</th><th style="color:var(--bad)">state vector (2<sup>n</sup> amplitudes)</th><th style="color:var(--ok)">stabilizer tableau (~n<sup>2</sup> bits)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>10</td><td style="color:var(--bad)">~10<sup>3</sup></td><td style="color:var(--ok)">420</td></tr>
+      <tr><td>40</td><td style="color:var(--bad)">~10<sup>12</sup></td><td style="color:var(--ok)">6,480</td></tr>
+      <tr><td>100</td><td style="color:var(--bad)">~10<sup>30</sup></td><td style="color:var(--ok)">40,200</td></tr>
+    </tbody>
+  </table>
+  <div class="q-fig-note">State-vector amplitudes (2<sup>n</sup>) explode while a stabilizer tableau (2n x (2n+1) ~ n<sup>2</sup> bits) barely grows. At n = 100 the state vector needs ~10<sup>30</sup> amplitudes but the tableau is only 40,200 bits.</div>
+</figure>
 
 The escape hatch is the **Gottesman-Knill theorem**: a circuit built only from *Clifford* gates, acting on a *stabilizer* state, can be simulated in polynomial memory and time -- you track an $\sim n^2$ bit tableau instead of $2^n$ numbers. qliff's Rust core stores that tableau column-major so each shot is fast, and shots are embarrassingly parallel.
 
@@ -43,15 +54,22 @@ Here $w_k$ is the weight of branch $k$, $C_k$ its Clifford gate(s), and the tota
 
 The simplest example is single-qubit depolarizing noise, `DEPOLARIZE1(p)`: with probability $1-p$ nothing happens, and otherwise an $X$, $Y$, or $Z$ fires, each with probability $p/3$. So $w_0 = 1-p$ on $C_0 = I$ and $w_X = w_Y = w_Z = p/3$.
 
-**DEPOLARIZE1 menu**
-
-Legend:
-- I -- no-fault branch ($w_0 = 1-p$)
-- X branch ($p/3$)
-- Y branch ($p/3$)
-- Z branch ($p/3$)
-
-*DEPOLARIZE1(p) as a labelled menu. Each bar's length is its weight $w_k$; they sum to 1.*
+<figure class="q-fig">
+  <div class="q-fig-title">DEPOLARIZE1 menu (p = 0.12)</div>
+  <ul class="q-legend">
+    <li style="--c:var(--muted)">I -- no-fault branch (w0 = 1 - p)</li>
+    <li style="--c:var(--x)">X branch (p/3)</li>
+    <li style="--c:var(--y)">Y branch (p/3)</li>
+    <li style="--c:var(--z)">Z branch (p/3)</li>
+  </ul>
+  <ul class="q-bars">
+    <li style="--v:.88;--c:var(--muted)"><b>I (no fault)</b><span class="q-track"></span><i>0.880</i></li>
+    <li style="--v:.04;--c:var(--x)"><b>X error</b><span class="q-track"></span><i>0.040</i></li>
+    <li style="--v:.04;--c:var(--y)"><b>Y error</b><span class="q-track"></span><i>0.040</i></li>
+    <li style="--v:.04;--c:var(--z)"><b>Z error</b><span class="q-track"></span><i>0.040</i></li>
+  </ul>
+  <div class="q-fig-note">DEPOLARIZE1(p) as a labelled menu at p = 0.12. Each bar's length is its weight w_k; they sum to 1 (0.880 + 3 x 0.040).</div>
+</figure>
 
 The weights are a genuine probability distribution: non-negative and summing to one. We'll see in a moment that *not all* physical noise is so polite -- but Pauli channels like this one are, and they cover the bulk of QEC benchmarking.
 
@@ -96,15 +114,24 @@ Every Pauli instruction qliff understands is one of these menus:
 | `X_ERROR(p)` | I, X | $1-p,\; p$ |
 | `Z_ERROR(p)` | I, Z | $1-p,\; p$ |
 
-Sampling is honest only in aggregate: any single shot is random, but as you draw more shots the empirical fraction of times each branch fires converges to its weight. Crank $N$ and watch the bars settle.
+Sampling is honest only in aggregate: any single shot is random, but as you draw more shots the empirical fraction of times each branch fires converges to its weight. The figure below draws $N$ shots and lines each empirical fraction up against its weight.
 
-**Law of large numbers**
-
-Legend:
-- theory weight $|w_k|$ (outline)
-- empirical fraction (N shots)
-
-*Per branch: theory weight $|w_k|$ (dashed outline) vs. empirical fraction of N seeded shots that fired it. x-axis = probability (fraction of shots, 0-1). More shots $\Rightarrow$ tighter match.*
+<figure class="q-fig">
+  <div class="q-fig-title">Law of large numbers -- DEPOLARIZE1(p = 0.15), N = 400 seeded shots</div>
+  <ul class="q-legend">
+    <li style="--c:var(--muted)">I</li>
+    <li style="--c:var(--x)">X</li>
+    <li style="--c:var(--y)">Y</li>
+    <li style="--c:var(--z)">Z</li>
+  </ul>
+  <ul class="q-bars">
+    <li style="--v:.86;--c:var(--muted)"><b>I (w=0.850)</b><span class="q-track"></span><i>0.860</i></li>
+    <li style="--v:.065;--c:var(--x)"><b>X (w=0.050)</b><span class="q-track"></span><i>0.065</i></li>
+    <li style="--v:.023;--c:var(--y)"><b>Y (w=0.050)</b><span class="q-track"></span><i>0.023</i></li>
+    <li style="--v:.053;--c:var(--z)"><b>Z (w=0.050)</b><span class="q-track"></span><i>0.053</i></li>
+  </ul>
+  <div class="q-fig-note">Per branch: the theory weight w_k (shown in each label) vs the empirical fraction of N = 400 seeded shots that fired it (bar + value). Even at 400 shots each fraction already sits within ~0.03 of its weight; more shots tighten the match.</div>
+</figure>
 
 ::: info DEPOLARIZE2
 Two-qubit depolarizing has **16** branches: identity plus the 15 non-identity Pauli pairs (XI, IX, XX, XY, ..., ZZ), each at $p/15$. They're grouped above for readability.
@@ -118,17 +145,34 @@ $$
 \text{detection event}_d \;=\; (\text{measured parity of detector } d)\;\oplus\;(\text{reference parity}_d).
 $$
 
-A detector fires precisely when noise flipped its deterministic value. That bit-string is the **syndrome** -- the only thing the decoder eats. Click data qubits to inject $X$ errors and watch the Z-checks between neighbours light up.
+A detector fires precisely when noise flipped its deterministic value. That bit-string is the **syndrome** -- the only thing the decoder eats. The figure below injects a single $X$ error and shows which Z-checks between neighbours light up.
 
-**Trajectory -> syndrome**
-
-Legend:
-- data qubit with X error
-- clean data qubit
-- Z-check lit (detection event = 1)
-- Z-check quiet (0)
-
-*A repetition-code round. Click a data qubit to flip it; a Z-check fires (lit) iff its two neighbours disagree.*
+<figure class="q-fig">
+  <div class="q-fig-title">Trajectory to syndrome -- repetition code, one X error on q2</div>
+  <ul class="q-legend">
+    <li style="--c:var(--x)">data qubit with X error</li>
+    <li style="--c:var(--muted)">clean data qubit</li>
+    <li style="--c:var(--bad)">Z-check lit (detection event = 1)</li>
+    <li style="--c:var(--z)">Z-check quiet (0)</li>
+  </ul>
+  <div style="color:var(--muted);font-size:.8em;margin:.4rem 0 -.4rem">data qubits</div>
+  <div class="q-cells">
+    <div class="q-cell" style="--c:var(--muted)"><b>I</b><span class="q-bits">x=0 z=0</span><small>q0</small></div>
+    <div class="q-cell" style="--c:var(--muted)"><b>I</b><span class="q-bits">x=0 z=0</span><small>q1</small></div>
+    <div class="q-cell" style="--c:var(--x)"><b>X</b><span class="q-bits">x=1 z=0</span><small>q2</small></div>
+    <div class="q-cell" style="--c:var(--muted)"><b>I</b><span class="q-bits">x=0 z=0</span><small>q3</small></div>
+    <div class="q-cell" style="--c:var(--muted)"><b>I</b><span class="q-bits">x=0 z=0</span><small>q4</small></div>
+  </div>
+  <div style="color:var(--muted);font-size:.8em;margin:.2rem 0 -.4rem">Z-checks (parity of neighbouring data qubits)</div>
+  <div class="q-cells">
+    <div class="q-cell" style="--c:var(--z)"><b>0</b><span class="q-bits">q0,q1</span><small>quiet</small></div>
+    <div class="q-cell" style="--c:var(--bad)"><b>1</b><span class="q-bits">q1,q2</span><small>lit</small></div>
+    <div class="q-cell" style="--c:var(--bad)"><b>1</b><span class="q-bits">q2,q3</span><small>lit</small></div>
+    <div class="q-cell" style="--c:var(--z)"><b>0</b><span class="q-bits">q3,q4</span><small>quiet</small></div>
+  </div>
+  <div style="font-family:var(--vp-font-family-mono,monospace);margin-top:.6rem">syndrome = [0, 1, 1, 0]</div>
+  <div class="q-fig-note">A repetition-code round with a single X error on q2. A Z-check fires (lit) iff its two neighbouring data qubits disagree, so this isolated error lights exactly the two checks that straddle it.</div>
+</figure>
 
 Notice an isolated error lights the *two* checks straddling it; a pair of adjacent errors only lights the checks at its ends. That structure is exactly what the matching, belief-propagation, and tensor-network decoders exploit. This panel is, quite literally, their input.
 
@@ -136,14 +180,20 @@ Notice an isolated error lights the *two* checks straddling it; a pair of adjace
 
 Real noise isn't always a tidy probability menu. A coherent **rotation** or **amplitude damping** is non-Pauli, and the only way to write it over Cliffords is with a **quasiprobability**: some weights go *negative*. You cannot sample from a probability that is below zero.
 
-**Quasiprobability branches**
-
-Legend:
-- positive weight $w_k \ge 0$ (above axis)
-- negative weight $w_k < 0$ (below axis)
-- zero axis
-
-*Quasiprobability branches. Bar height = $|w_k|$; negative weights (below the axis) are the hallmark of non-Pauli noise.*
+<figure class="q-fig">
+  <div class="q-fig-title">Quasiprobability branches -- RZ(theta = 0.6)</div>
+  <ul class="q-legend">
+    <li style="--c:var(--ok)">positive weight w_k >= 0</li>
+    <li style="--c:var(--bad)">negative weight w_k &lt; 0</li>
+  </ul>
+  <ul class="q-bars">
+    <li style="--v:.728;--c:var(--ok)"><b>I</b><span class="q-track"></span><i>+0.728</i></li>
+    <li style="--v:.098;--c:var(--bad)"><b>Z</b><span class="q-track"></span><i>-0.098</i></li>
+    <li style="--v:.467;--c:var(--ok)"><b>S</b><span class="q-track"></span><i>+0.467</i></li>
+    <li style="--v:.098;--c:var(--bad)"><b>S&dagger;</b><span class="q-track"></span><i>-0.098</i></li>
+  </ul>
+  <div class="q-fig-note">The {I, Z, S, S-dagger} quasiprobability for a coherent RZ(0.6) rotation. Bar length = |w_k|, colored by sign; the Z and S-dagger weights are negative (-0.098) -- the hallmark of non-Pauli noise. Negativity gamma = sum |w_k| = 1.390 > 1.</div>
+</figure>
 
 The fix is **importance sampling**. Draw a branch with probability $|w_k|/\gamma$, and carry a signed **importance weight** $\operatorname{sign}(w_k)\,\gamma$ with the shot. Any statistic $f$ is then estimated by the *weighted* mean over $N$ shots:
 
@@ -167,17 +217,27 @@ Contrast the two regimes. **Naive Pauli sampling** has every $w_k \ge 0$, so $\g
 
 :::
 
-**Weighted vs. naive estimate**
-
-Legend:
-- truth $\sum w_k \cdot \text{indicator}$
-- weighted estimate ($\pm 2\sigma$ band)
-- naive estimate (biased)
-
-*Estimating P(a Z error fires) two ways, on a number line of the estimated value. The weighted estimate (with its $\pm 2\sigma$ band) hugs the truth; the naive one (ignoring $\operatorname{sign}\cdot\gamma$) is biased.*
+<figure class="q-fig">
+  <div class="q-fig-title">Weighted vs naive estimate of P(a Z error fires)</div>
+  <ul class="q-legend">
+    <li style="--c:var(--muted)">truth = sum w_k * indicator</li>
+    <li style="--c:var(--accent)">weighted estimate (+/- 2 sigma band)</li>
+    <li style="--c:var(--bad)">naive estimate (biased)</li>
+  </ul>
+  <div style="position:relative;height:64px;margin:1.8rem 0 .6rem;border-bottom:1px solid var(--line)">
+    <div style="position:absolute;left:16.2%;width:21.1%;top:26px;height:14px;border-radius:4px;background:color-mix(in srgb,var(--accent) 30%,transparent)"></div>
+    <div style="position:absolute;left:28.4%;top:-4px;bottom:-6px;width:2px;background:var(--muted)"></div>
+    <div style="position:absolute;left:28.4%;top:-22px;transform:translateX(-50%);white-space:nowrap;font-size:.72em;color:var(--muted)">truth -0.098</div>
+    <div style="position:absolute;left:26.7%;top:27px;width:12px;height:12px;border-radius:50%;transform:translateX(-6px);background:var(--accent)"></div>
+    <div style="position:absolute;left:26.7%;top:44px;transform:translateX(-50%);white-space:nowrap;font-size:.72em;color:var(--accent)">weighted -0.103</div>
+    <div style="position:absolute;left:83.8%;top:27px;width:12px;height:12px;border-radius:50%;transform:translateX(-6px);background:var(--bad)"></div>
+    <div style="position:absolute;left:83.8%;top:-22px;transform:translateX(-50%);white-space:nowrap;font-size:.72em;color:var(--bad)">naive +0.074</div>
+  </div>
+  <div class="q-fig-note">Estimating P(a Z error fires) for RZ(0.6) over N = 500 seeded shots, drawn on a number line of the estimated value. The weighted estimate (-0.103, with its +/- 2 sigma band, half-width ~0.033) hugs the truth (-0.098); the naive estimate (+0.074, ignoring sign * gamma) is badly biased -- it even lands on the wrong side of zero.</div>
+</figure>
 
 ::: warning The catch: variance grows with gamma^2
-Importance sampling is unbiased but not free. Each shot's weight has magnitude $\gamma$, so the estimator's variance scales with $\gamma^2$ (and compounds multiplicatively across locations). The further your noise is from Clifford, the bigger $\gamma$, and the more shots you need. Push $\theta$ or $p$ up and the error bar visibly widens.
+Importance sampling is unbiased but not free. Each shot's weight has magnitude $\gamma$, so the estimator's variance scales with $\gamma^2$ (and compounds multiplicatively across locations). The further your noise is from Clifford, the bigger $\gamma$, and the more shots you need. The larger $\theta$ or $p$, the wider that error bar.
 :::
 
 ## Why it all scales
