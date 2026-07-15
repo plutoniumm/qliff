@@ -3,7 +3,7 @@
   // IMPORTANT: pass the TeX via a raw string so backslashes survive ->
   //   <Math expr={String.raw`\sqrt{1-p}`} />        (correct)
   // A plain quoted attribute with a DOUBLED backslash, expr="\\sqrt{1-p}", reaches
-  // KaTeX as `\\sqrt` -- the `\\` is KaTeX's line break, so the command name is
+  // KaTeX as `\\sqrt`, where the `\\` is KaTeX's line break, so the command name is
   // eaten and renders as the bare letters "sqrt". Single-backslash quoted
   // (expr="\sqrt{...}") works too, but braces still need String.raw, so just always
   // use String.raw. Errors render in red rather than throwing so a typo never

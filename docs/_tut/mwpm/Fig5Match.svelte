@@ -107,7 +107,7 @@
   <div class="score">
     <span class="k">your cost</span>
     <span class="v mono" style="color:var(--accent2)">
-      {userWeight === null ? "-- match all defects --" : userWeight.toFixed(2)}
+      {userWeight === null ? "(match all defects)" : userWeight.toFixed(2)}
     </span>
   </div>
   <button class="reveal" onclick={() => (revealOpt = !revealOpt)}>

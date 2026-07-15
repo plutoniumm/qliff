@@ -1,7 +1,6 @@
 // Faithful TS reimplementation of the LER / fidelity maths that qliff computes
 // in `qliff/qec/threshold.py` and `qliff/qec/codes.py`. Everything here mirrors
-// the real pipeline -- sample, decode, compare -- so the interactive demos are
-// honest, not hand-waved. Two model families live here:
+// the qliff pipeline (sample, decode, compare). Two model families live here:
 //
 //   1. The repetition code under bit-flip + majority vote. Its logical error
 //      rate has a closed form (a binomial tail), and a seeded Monte-Carlo of it
@@ -20,7 +19,7 @@ import { mulberry32 } from "$lib/rng";
 
 // One shot is a logical error iff the decoder's predicted observable flips
 // disagree with the TRUE flips in ANY column (np.any(pred != obs, axis=1)).
-export function shotIsError(predicted: boolean[], observed: boolean[]): boolean {
+export function shotIsError (predicted: boolean[], observed: boolean[]): boolean {
   for (let i = 0; i < predicted.length; i += 1) {
     if (predicted[i] !== observed[i]) {
       return true;
@@ -31,7 +30,7 @@ export function shotIsError(predicted: boolean[], observed: boolean[]): boolean 
 }
 
 // logical_fidelity = 1 - mean(shot is error). LER is its complement.
-export function fidelityFromShots(predicted: boolean[][], observed: boolean[][]): number {
+export function fidelityFromShots (predicted: boolean[][], observed: boolean[][]): number {
   if (predicted.length === 0) {
     return 1;
   }
@@ -45,17 +44,13 @@ export function fidelityFromShots(predicted: boolean[][], observed: boolean[][])
   return 1 - wrong / predicted.length;
 }
 
-// ---------------------------------------------------------------------------
-// Repetition code: exact (analytic) logical error rate
-// ---------------------------------------------------------------------------
-
 // log of n-choose-k via log-gamma, so binomial tails stay stable for large d.
-function logChoose(n: number, k: number): number {
+function logChoose (n: number, k: number): number {
   return logGamma(n + 1) - logGamma(k + 1) - logGamma(n - k + 1);
 }
 
 // Lanczos approximation to ln Gamma(x).
-function logGamma(x: number): number {
+function logGamma (x: number): number {
   const g = [
     676.5203681218851, -1259.1392167224028, 771.32342877765313,
     -176.61502916214059, 12.507343278686905, -0.13857109526572012,
@@ -76,9 +71,9 @@ function logGamma(x: number): number {
 
 // Majority vote over `d` independent bit-flips at rate p fails when STRICTLY
 // more than d/2 of them flip: LER = sum_{k > d/2} C(d,k) p^k (1-p)^(d-k).
-// (For even d a d/2 tie is resolvable, so the strict inequality is the honest
+// (For even d a d/2 tie is resolvable, so the strict inequality is the correct
 // boundary for an odd-distance repetition code, which is the usual choice.)
-export function repCodeLER(p: number, d: number): number {
+export function repCodeLER (p: number, d: number): number {
   if (p <= 0) {
     return 0;
   }
@@ -111,8 +106,8 @@ export interface MCResult {
 
 // Run N independent repetition-code shots: flip each of d data bits with prob p,
 // the decoder (majority vote) is "wrong" iff > d/2 flipped. We track only the
-// verdict per shot, exactly as qliff compares predicted vs true observable.
-export function repCodeMonteCarlo(p: number, d: number, shots: number, seed: number): MCResult {
+// verdict per shot, as qliff compares predicted vs true observable.
+export function repCodeMonteCarlo (p: number, d: number, shots: number, seed: number): MCResult {
   const rng = mulberry32(seed);
   let errors = 0;
   const half = d / 2;
@@ -135,7 +130,7 @@ export function repCodeMonteCarlo(p: number, d: number, shots: number, seed: num
 
 // A running trace of the estimate as shots accumulate, for the "watch it
 // converge" animation. Returns the LER estimate after every `stride` shots.
-export function repCodeTrace(
+export function repCodeTrace (
   p: number,
   d: number,
   shots: number,
@@ -181,7 +176,7 @@ export interface WeightedResult {
 // honestly: each shot draws a sign (+/-) from the quasiprobability and a weight
 // magnitude `gamma`, plus an "error" indicator at the underlying rate. The point
 // the demo makes -- bigger gamma blows up std(w*error) -- is the real effect.
-export function weightedMonteCarlo(
+export function weightedMonteCarlo (
   trueLER: number,
   gamma: number,
   shots: number,
@@ -225,7 +220,7 @@ export function weightedMonteCarlo(
 // suppresses the LER like a power law; above p_th it amplifies it. This is the
 // standard sub-threshold scaling, written so the crossing emerges from the
 // formula as the reader moves the sliders -- not a fit to any real data.
-export function surfaceModelLER(p: number, d: number, pTh: number, a: number): number {
+export function surfaceModelLER (p: number, d: number, pTh: number, a: number): number {
   if (p <= 0) {
     return 0;
   }
@@ -239,7 +234,7 @@ export function surfaceModelLER(p: number, d: number, pTh: number, a: number): n
 }
 
 // Sweep the model across a log-spaced p-range for one distance.
-export function surfaceModelCurve(
+export function surfaceModelCurve (
   d: number,
   pTh: number,
   a: number,
@@ -259,7 +254,7 @@ export function surfaceModelCurve(
 }
 
 // Analytic repetition-code LER curve across a p-range (linear or log spaced).
-export function repCodeCurve(
+export function repCodeCurve (
   d: number,
   pMin: number,
   pMax: number,

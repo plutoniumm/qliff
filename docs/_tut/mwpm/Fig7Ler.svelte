@@ -87,7 +87,7 @@
         {ler === 0 ? "< 1/" + SHOTS : ler.toExponential(2)}
       </span>
       <span class="sub mono">
-        {ler < p ? "below physical p -- the code helps" : "above physical p -- past threshold"}
+        {ler < p ? "below physical p: the code helps" : "above physical p: past threshold"}
       </span>
     </div>
   </div>

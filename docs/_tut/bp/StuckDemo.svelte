@@ -34,7 +34,7 @@
     {#if stuckFrame.satisfied}
       (reproduces syndrome)
     {:else}
-      -- does <strong>not</strong> reproduce the syndrome
+      does <strong>not</strong> reproduce the syndrome
       <span class="mono">{stuckSyndrome.join("")}</span>
     {/if}
   </div>

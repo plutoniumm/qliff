@@ -158,9 +158,21 @@
 
   // One config row per knob axis, driving a single selector loop in the template.
   let variantAxes = $derived([
-    { key: "pattern" as const, label: "Stabiliser type", options: offered(PATTERN_OPTIONS, codeTemplate?.patterns) },
-    { key: "start" as const, label: "Colouring", options: offered(START_OPTIONS, codeTemplate?.starts) },
-    { key: "edge" as const, label: "Boundary", options: offered(EDGE_OPTIONS, codeTemplate?.edges) },
+    {
+      key: "pattern" as const,
+      label: "Stabiliser type",
+      options: offered(PATTERN_OPTIONS, codeTemplate?.patterns),
+    },
+    {
+      key: "start" as const,
+      label: "Colouring",
+      options: offered(START_OPTIONS, codeTemplate?.starts),
+    },
+    {
+      key: "edge" as const,
+      label: "Boundary",
+      options: offered(EDGE_OPTIONS, codeTemplate?.edges),
+    },
   ]);
 
   // Tell Builder which source is active + at what distance so it can draw the
@@ -176,7 +188,11 @@
   // fall back to css_z), then redraw the canvas. Variant itself doesn't change the
   // geometry, so it never needs to flow through onspecchange.
   function onCodeChange(): void {
-    variant = { pattern: "css", start: "Z", edge: "even" };
+    variant = {
+      pattern: "css",
+      start: "Z",
+      edge: "even",
+    };
     emitSpec();
   }
 

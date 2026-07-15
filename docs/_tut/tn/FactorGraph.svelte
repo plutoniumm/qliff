@@ -85,7 +85,7 @@
       <rect x={detX[det.d] - 16} y={detY - 16} width="32" height="32" rx="6" />
       <text x={detX[det.d]} y={detY + 5} class="node-label">{syndrome[det.d]}</text>
     </g>
-    <text x={detX[det.d]} y={detY - 26} class="cap">det {det.d}</text>
+    <text x={detX[det.d]} y={detY - 26} class="cap">check {det.d}</text>
   {/each}
 
   <!-- copy tensors (mechanisms) -->
@@ -110,7 +110,7 @@
   {/each}
 
   <!-- legend ticks -->
-  <text x={detX[0] - 40} y={detY + 4} class="side">detectors</text>
+  <text x={detX[0] - 40} y={detY + 4} class="side">checks</text>
   <text x={20} y={copyY + 4} class="side">mechanisms</text>
   <text x={20} y={obsY + 4} class="side">observable</text>
 </svg>

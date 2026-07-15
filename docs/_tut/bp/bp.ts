@@ -73,7 +73,7 @@ export interface OsdResult {
 // Building a Code from a dense H
 // ----------------------------------------------------------------------------
 
-export function makeCode(H: number[][], priors: number[]): Code {
+export function makeCode (H: number[][], priors: number[]): Code {
   const nChecks = H.length;
   const nVars = H[0]?.length ?? 0;
   const varNeighbours: number[][] = Array.from({ length: nVars }, () => []);
@@ -97,23 +97,23 @@ export function makeCode(H: number[][], priors: number[]): Code {
 
 // Prior log-likelihood ratio of a mechanism with firing probability p.
 // LLR = log((1 - p) / p): positive => probably not firing.
-export function llrFromP(p: number): number {
+export function llrFromP (p: number): number {
   const clamped = Math.min(Math.max(p, 1e-9), 1 - 1e-9);
 
   return Math.log((1 - clamped) / clamped);
 }
 
 // Inverse: posterior probability that a mechanism fired, from its LLR.
-export function pFromLlr(llr: number): number {
+export function pFromLlr (llr: number): number {
   return 1 / (1 + Math.exp(llr));
 }
 
-function key(a: number, b: number): string {
+function key (a: number, b: number): string {
   return `${a},${b}`;
 }
 
 // Syndrome (mod-2 detector pattern) produced by an error/mechanism vector.
-export function syndromeOf(code: Code, error: number[]): number[] {
+export function syndromeOf (code: Code, error: number[]): number[] {
   const s = new Array<number>(code.nChecks).fill(0);
   for (let c = 0; c < code.nChecks; c += 1) {
     let acc = 0;
@@ -126,7 +126,7 @@ export function syndromeOf(code: Code, error: number[]): number[] {
   return s;
 }
 
-function hammingWeight(v: number[]): number {
+function hammingWeight (v: number[]): number {
   let w = 0;
   for (const x of v) {
     w += x & 1;
@@ -141,20 +141,20 @@ function hammingWeight(v: number[]): number {
 
 // tanh(x/2) clamped so atanh stays finite. The product over neighbours of
 // tanh(m_in/2) can hit +-1; we keep it strictly inside the open interval.
-function tanhHalf(x: number): number {
+function tanhHalf (x: number): number {
   const t = Math.tanh(x / 2);
 
   return Math.min(Math.max(t, -1 + 1e-12), 1 - 1e-12);
 }
 
 // Run sum-product BP for `maxIter` iterations on the given syndrome. The check
-// node update uses the exact tanh product rule:
+// node update uses the tanh product rule:
 //     tanh(m_out / 2) = product over other neighbours of tanh(m_in / 2),
 // with a sign flip for every lit detector (syndrome bit = 1), so the messages
 // push the beliefs toward an error pattern that reproduces the syndrome. Stops
 // early once the hard decision satisfies all checks (but records every frame up
 // to the first satisfaction so the UI can replay it).
-export function runBp(code: Code, syndrome: number[], maxIter: number): BpResult {
+export function runBp (code: Code, syndrome: number[], maxIter: number): BpResult {
   const { nChecks, nVars, varNeighbours, checkNeighbours } = code;
   const prior = code.priors.map(llrFromP);
 
@@ -260,7 +260,7 @@ export function runBp(code: Code, syndrome: number[], maxIter: number): BpResult
   };
 }
 
-function xorSyndrome(a: number[], b: number[]): number[] {
+function xorSyndrome (a: number[], b: number[]): number[] {
   return a.map((x, i) => (x ^ b[i]) & 1);
 }
 
@@ -274,7 +274,7 @@ function xorSyndrome(a: number[], b: number[]): number[] {
 // exactly so the syndrome is matched, then (order > 0) search small flips of
 // the least-reliable free columns for a lower-weight consistent solution.
 // osdOrder mirrors qliff's osd_order=7 (we cap the search for the tiny demo).
-export function runOsd(
+export function runOsd (
   code: Code,
   syndrome: number[],
   posterior: number[],
@@ -401,7 +401,7 @@ export function runOsd(
 
 // All non-empty subsets of `items` with size in [1, k]. Sizes are small here
 // (k <= 7 over <= 12 items) so this stays cheap.
-function subsetsUpTo(items: number[], k: number): number[][] {
+function subsetsUpTo (items: number[], k: number): number[][] {
   const out: number[][] = [];
   const n = items.length;
 
@@ -432,7 +432,7 @@ function subsetsUpTo(items: number[], k: number): number[][] {
 // (n-1) x n with H[c] touching bits c and c+1. Each bit is one mechanism; each
 // check is one detector. This is graphlike (<= 2 vars per check) and is the
 // gentle first example: BP behaves like a tidy chain of gossiping neighbours.
-export function repetitionCode(n: number, p: number): Code {
+export function repetitionCode (n: number, p: number): Code {
   const H: number[][] = [];
   for (let c = 0; c < n - 1; c += 1) {
     const row = new Array<number>(n).fill(0);
@@ -455,7 +455,7 @@ export function repetitionCode(n: number, p: number): Code {
 // MWPM.
 //
 // H is 3 detectors x 4 mechanisms.
-export function degenerateCode(p: number): Code {
+export function degenerateCode (p: number): Code {
   const H = [
     [1, 1, 1, 1],
     [1, 1, 0, 0],

@@ -33,7 +33,7 @@ p = PauliString.parse("-XYZ")
 | `n` | number of qubits |
 | `tuple()` | `(sign, x, z)` with `sign` in `{0,1}`; raises for non-Hermitian phases |
 | `commutes_with(other)` | whether the two Paulis commute |
-| `a * b` | Pauli product, tracking the $i$ phase exactly |
+| `a * b` | Pauli product, tracking the $i$ phase |
 
 ```python
 from qliff import PauliString
@@ -77,7 +77,7 @@ Simulator(2).measure("XX")  # (±1, True)
 
 ## State fidelity
 
-`fidelity(a, b)` returns the exact overlap $|\langle a|b\rangle|^2$ between two
+`fidelity(a, b)` returns the overlap $|\langle a|b\rangle|^2$ between two
 simulators' stabilizer states. It measures each stabilizer generator of `a` on a
 copy of `b`, so the result is always a power of two.
 

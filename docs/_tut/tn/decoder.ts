@@ -45,7 +45,7 @@ export interface Dem {
 // degeneracy we want.
 //
 // `measP` (optional) adds one degree-1 MEASUREMENT-ERROR mechanism per detector:
-// it lights that single detector and flips no observable, exactly as a faulty
+// it lights that single detector and flips no observable, as a faulty
 // stabilizer readout does in a circuit-level DEM. These extra mechanisms make a
 // single syndrome explainable many ways (a measurement glitch OR a data chain),
 // so a logical class genuinely contains several error patterns -- real
@@ -185,7 +185,7 @@ export interface DecodeResult {
   openLegs: string[];
 }
 
-// Run the REAL exact contraction (or chi-truncated if maxBond given) and read
+// Run the exact contraction (or chi-truncated if maxBond given) and read
 // the per-logical-class weights off the open legs. _decode_one in tn.py.
 export function decode(
   dem: Dem,
@@ -282,7 +282,7 @@ export function enumerateErrors(dem: Dem, syndrome: number[]): {
 
 // A naive minimum-weight (MWPM-flavoured) pick: among the syndrome-consistent
 // error configs, take the single MOST PROBABLE one and report ITS logical class.
-// This ignores degeneracy and is exactly where MLD can beat it.
+// This ignores degeneracy and is where MLD can beat it.
 export function minWeightPick(dem: Dem, syndrome: number[]): {
   logical: number | null;
   prob: number;

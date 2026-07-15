@@ -7,7 +7,7 @@ A Clifford stabilizer simulator with support for noisy and mid-circuit measureme
   decomposition `E = Σ_μ q_μ S_μ` and **stratified importance sampling**
   ([arXiv:2512.07304](https://arxiv.org/abs/2512.07304)), "nearly as cheap as Pauli noise."
 - **Decoder-ready QEC primitives**: detectors, observables, detection-event sampling, a
-  detector error model by exact Pauli-frame propagation, and exporters (parity-check matrix +
+  detector error model by Pauli-frame propagation, and exporters (parity-check matrix +
   priors, matching weights, syndrome/label tensors). These drop
   directly into MWPM (pymatching), BP, or ML decoders.
 
@@ -114,8 +114,10 @@ fast tableau engine.
 ./do test
 ./do lint
 ./do bench
-./do docs      # build docs
-./do deploy    # publish the package to PyPI
+./do build     # all wheels (macOS/Linux/Windows, x86_64 + arm) + sdist, no upload
+./do deploy    # publish what `build` made to PyPI (no rebuild)
+
+cd docs && npm run build && npm run deploy   # docs site -> GitHub Pages
 ```
 
 ## License

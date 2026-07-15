@@ -23,7 +23,7 @@ better.
 
 ### Gates and measurement
 
-These mirror the simulator exactly and take one or more targets (two-qubit gates
+These mirror the simulator and take one or more targets (two-qubit gates
 take flattened `(control, target)` pairs).
 
 | Method | Effect |

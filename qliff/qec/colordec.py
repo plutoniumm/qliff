@@ -26,9 +26,7 @@ class ColorDecoder(BatchDecoder):
     def __init__(self, dem: DetectorErrorModel, max_weight: int = 3):
         self.num_observables = dem.num_observables
         self.num_detectors = dem.num_detectors
-        mechs = [
-            (frozenset(dets), frozenset(obs)) for _p, dets, obs in dem.mechanisms
-        ]
+        mechs = [(frozenset(dets), frozenset(obs)) for _p, dets, obs in dem.mechanisms]
         # Keep the precompute bounded: with many mechanisms a weight-3 sweep already
         # covers the correction radius of the small patches, so cap weight as the
         # mechanism count grows.

@@ -78,7 +78,7 @@
   <b style="color:{relError < 1e-6 ? C.ok : relError < 0.05 ? C.defect : C.bad}"
     >{(relError * 100).toFixed(relError < 1e-4 ? 4 : 2)}%</b
   >
-  {#if relError < 1e-9}<span class="exact">-- exact</span>{/if}
+  {#if relError < 1e-9}<span class="exact">(exact)</span>{/if}
 </div>
 
 <style>

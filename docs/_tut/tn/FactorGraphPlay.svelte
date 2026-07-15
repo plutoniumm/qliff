@@ -1,22 +1,23 @@
 <script lang="ts">
-  // Section 4 island -- the live repetition-code factor graph. Two sliders (code
-  // distance, physical error p) build the DEM and its factor graph; click a
-  // detector to flip its observed syndrome bit and the parity tensor re-pins.
-  // Mechanisms touching a lit detector are highlighted, and the two factor
-  // tensors (biased COPY [1-p, p] and the syndrome-pinned parity) are printed
-  // below. Self-contained: owns its own distance/p/syndrome state (no $effect
-  // writes back into shared state; the syndrome is length-fitted by a pure
-  // derived, not an effect).
+  // Live repetition-code factor graph. Opens on the page's running example
+  // (3 data qubits, p = 0.1, syndrome (1, 0)) so the drawn network is the one
+  // the prose builds tensor by tensor. Two sliders (code distance, physical
+  // error p) rebuild the DEM and its factor graph; click a detector to flip
+  // its observed syndrome bit and the parity tensor re-pins. Mechanisms
+  // touching a lit detector are highlighted, and the two factor tensors
+  // (biased COPY [1-p, p] and the syndrome-pinned parity) are printed below.
+  // Self-contained: owns its own distance/p/syndrome state (no $effect writes
+  // back into shared state; the syndrome is length-fitted by a pure derived).
   import TnSlider from "./TnSlider.svelte";
   import FactorGraph from "./FactorGraph.svelte";
   import { C } from "$lib/colors";
   import { repetitionDem, buildFactorGraph, type Dem } from "./decoder";
 
-  let dataQubits = $state(4); // distance of the live code
-  let p = $state(0.15); // physical error probability
+  let dataQubits = $state(3); // the running example's code
+  let p = $state(0.1); // physical error probability
   const demLive: Dem = $derived(repetitionDem(dataQubits, p));
   const fgLive = $derived(buildFactorGraph(demLive));
-  let synLive = $state<number[]>([1, 0, 0]);
+  let synLive = $state<number[]>([1, 0]); // the measured shot s = 10
 
   // keep the syndrome array length in sync WITHOUT an effect: derive a padded
   // copy used everywhere downstream (pure function of inputs).

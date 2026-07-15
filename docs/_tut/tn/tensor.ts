@@ -246,8 +246,8 @@ export function transposeTo(t: Tensor, target: string[]): Tensor {
 
 // ---- bond truncation (the chi knob) ---------------------------------------
 
-// Truncate the shared bond between a and b to `maxBond` via a thin SVD, exactly
-// as _compress_bond in tn.py: fold the rest-legs of each side into a matrix with
+// Truncate the shared bond between a and b to `maxBond` via a thin SVD, as
+// _compress_bond in tn.py: fold the rest-legs of each side into a matrix with
 // the shared legs as the contracted index, form M = A B, SVD it, keep the chi
 // largest singular values, and split sqrt(S) into each side through a fresh bond
 // of dim <= chi. Returns [A', B', didTruncate].

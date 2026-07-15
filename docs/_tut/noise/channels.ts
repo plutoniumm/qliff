@@ -1,13 +1,13 @@
 // The stabilizer-noise engine, in TypeScript, mirroring qliff/noise/channel.py
-// and qliff/qec/sampler.py EXACTLY. Every weight, every sampling decision, and
-// the detection-event definition on this page are the real thing the simulator
-// would compute -- just small enough to watch by hand.
+// and qliff/qec/sampler.py. Every weight, every sampling decision, and the
+// detection-event definition on this page are what the simulator itself would
+// compute, kept small enough to watch by hand.
 //
 // A CHANNEL is a list of BRANCHES. Each branch is a signed weight attached to a
 // list of Clifford ops (gate + qubit). The identity / no-fault branch is always
-// first. For Pauli channels the weights are a genuine probability distribution
-// (>= 0, sum to 1); for non-Pauli channels they are SIGNED quasiprobabilities
-// whose magnitudes sum to gamma >= 1.
+// first. For Pauli channels the weights are a probability distribution
+// (>= 0, sum to 1); for non-Pauli channels such as AMPLITUDE_DAMP they are
+// SIGNED quasiprobabilities whose magnitudes sum to gamma >= 1.
 
 // ---------------------------------------------------------------------------
 // Branches
@@ -30,7 +30,7 @@ export interface Branch {
 }
 
 // ---------------------------------------------------------------------------
-// Channel families -- branches(qubits) mirrors channel.py one-for-one.
+// Channel families: branches(qubits) mirrors channel.py one-for-one.
 // ---------------------------------------------------------------------------
 
 export type ChannelKind =
@@ -48,7 +48,7 @@ export interface Channel {
   isPauli: boolean;
   // qubits this location acts on (1 for single-qubit channels, 2 for DEPOLARIZE2).
   qubits: number[];
-  // (weight, ops) branches, identity first -- a pure function of the channel's
+  // (weight, ops) branches, identity first: a pure function of the channel's
   // parameters and its target qubits.
   branches: () => Branch[];
 }
@@ -56,9 +56,9 @@ export interface Channel {
 const PAULI1 = ["I", "X", "Y", "Z"] as const;
 
 // PauliChannel(px, py, pz): {I, X@px, Y@py, Z@pz}. twoq spreads px over the 15
-// non-identity 2-qubit Pauli pairs at px/15 each (py, pz dead) -- the exact
+// non-identity 2-qubit Pauli pairs at px/15 each (py, pz dead): the
 // branches() of qliff's PauliChannel.
-function pauliBranches(
+function pauliBranches (
   px: number,
   py: number,
   pz: number,
@@ -101,8 +101,8 @@ function pauliBranches(
 
 // Rotation exp(-i theta P / 2) as a quasiprob mix of the Cliffords diagonal in
 // Z: {I, Z, S, S†}, with bd = (1 - cos - sin)/4. RX = H RZ H wraps each branch
-// in H either side (identical weights) -- mirrors channel.py's Rotation.
-function rotationBranches(axis: "X" | "Z", theta: number, qubits: number[]): Branch[] {
+// in H either side (identical weights); mirrors channel.py's Rotation.
+function rotationBranches (axis: "X" | "Z", theta: number, qubits: number[]): Branch[] {
   const q = qubits[0];
   const cos = Math.cos(theta);
   const sin = Math.sin(theta);
@@ -133,7 +133,7 @@ function rotationBranches(axis: "X" | "Z", theta: number, qubits: number[]): Bra
 
 // AmplitudeDamping(p) exactly over {I, Z, R=reset}: q_I=[(1-p)+root]/2,
 // q_Z=[(1-p)-root]/2 (< 0), q_R = p, root = sqrt(1-p).
-function dampingBranches(p: number, qubits: number[]): Branch[] {
+function dampingBranches (p: number, qubits: number[]): Branch[] {
   const q = qubits[0];
   const root = Math.sqrt(Math.max(0, 1 - p));
   const qi = (1 - p + root) / 2;
@@ -148,7 +148,7 @@ function dampingBranches(p: number, qubits: number[]): Branch[] {
 
 // Factories mirroring NOISE_FACTORIES. DEPOLARIZE1 -> px=py=pz=p/3; DEPOLARIZE2
 // -> px=p over 15 pairs; X_ERROR/Z_ERROR -> single Pauli at p.
-export function makeChannel(
+export function makeChannel (
   kind: ChannelKind,
   p: number,
   qubits: number[],
@@ -218,26 +218,22 @@ export function makeChannel(
 // gamma / total weight
 // ---------------------------------------------------------------------------
 
-// Total signed weight Sum(w): exactly 1 for any honest trace-preserving channel.
-export function totalWeight(branches: Branch[]): number {
+// Total signed weight Sum(w): 1 for any trace-preserving channel.
+export function totalWeight (branches: Branch[]): number {
   return branches.reduce((s, b) => s + b.weight, 0);
 }
 
 // Negativity gamma = Sum|w|: 1 iff a true probability mixture, > 1 is the price
 // of non-Cliffordness. Drives the per-location sampling factor and the variance.
-export function gamma(branches: Branch[]): number {
+export function gamma (branches: Branch[]): number {
   return branches.reduce((s, b) => s + Math.abs(b.weight), 0);
 }
-
-// ---------------------------------------------------------------------------
-// Channel.sample -- the exact rule from channel.py
-// ---------------------------------------------------------------------------
 
 export interface SampleResult {
   // index of the branch that fired.
   index: number;
   branch: Branch;
-  // sign(weight) * gamma -- the per-location importance factor. 1 for Pauli.
+  // sign(weight) * gamma: the per-location importance factor. 1 for Pauli.
   factor: number;
   // the actual uniform draw on [0, gamma) used (for the dice-roll visual).
   threshold: number;
@@ -248,7 +244,7 @@ export interface SampleResult {
 // Draw one branch w.p. |weight|/gamma; return (sign(weight)*gamma, ops). `rng`
 // is a [0,1) generator (mulberry32). gamma = Sum|w|; threshold = rng()*gamma;
 // walk branches accumulating |w| and stop at the first that covers threshold.
-export function sampleChannel(branches: Branch[], rng: () => number): SampleResult {
+export function sampleChannel (branches: Branch[], rng: () => number): SampleResult {
   const g = gamma(branches);
   const threshold = rng() * g;
   let acc = 0;
@@ -299,7 +295,7 @@ export interface Circuit {
 }
 
 // Effect of one Clifford op on a Pauli FRAME. We track each qubit's error as a
-// 2-bit (x, z) Pauli frame -- enough to get measurement parities right for the
+// 2-bit (x, z) Pauli frame, enough to get measurement parities right for the
 // CSS/rep-code circuits this page uses, and it makes the trajectory's effect on
 // detectors exact without a full tableau. Gates we support: X, Y, Z, H, S, S†,
 // R(reset). For the teaching circuits only X/Z/H/reset actually move the frame
@@ -310,7 +306,7 @@ interface Frame {
   flip: boolean[];
 }
 
-function applyOp(frame: Frame, gate: string, q: number): void {
+function applyOp (frame: Frame, gate: string, q: number): void {
   switch (gate) {
     case "X":
     case "Y":
@@ -355,10 +351,10 @@ export interface TrajectoryRun {
 }
 
 // Replay the circuit once. If `noiseless`, every location takes its identity
-// branch (no fault) -- this produces the reference frame. Otherwise sample one
-// branch per location and accumulate the signed weight. This is exactly the
+// branch (no fault): this produces the reference frame. Otherwise sample one
+// branch per location and accumulate the signed weight. This is the
 // DetectorSampler / WeightedDetectorSampler `_record` / `_trajectory` loop.
-function replay(circuit: Circuit, rng: (() => number) | null): {
+function replay (circuit: Circuit, rng: (() => number) | null): {
   flip: boolean[];
   weight: number;
   fires: NoiseFire[];
@@ -393,7 +389,7 @@ function replay(circuit: Circuit, rng: (() => number) | null): {
 }
 
 // Parity of the Z-measurement flips over a set of qubit indices.
-function parity(flip: boolean[], qubits: number[]): number {
+function parity (flip: boolean[], qubits: number[]): number {
   let bit = 0;
   for (const q of qubits) {
     bit ^= flip[q] ? 1 : 0;
@@ -407,7 +403,7 @@ function parity(flip: boolean[], qubits: number[]): number {
 // errors), the reference parity is 0 for every detector; we keep the XOR
 // explicit so the definition is visible and stays correct if a circuit ever
 // starts with a deterministic flip.
-export function runTrajectory(circuit: Circuit, seed: number): TrajectoryRun {
+export function runTrajectory (circuit: Circuit, seed: number): TrajectoryRun {
   // reference: identity branch everywhere.
   const ref = replay(circuit, null);
   const detRef = circuit.detectors.map((d) => parity(ref.flip, d));
@@ -439,7 +435,7 @@ export function runTrajectory(circuit: Circuit, seed: number): TrajectoryRun {
 // $lib/rng for sliders etc.
 // ---------------------------------------------------------------------------
 
-function mulberry(seed: number): () => number {
+function mulberry (seed: number): () => number {
   let a = seed >>> 0;
 
   return function () {

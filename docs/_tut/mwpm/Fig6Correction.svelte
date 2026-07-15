@@ -58,7 +58,7 @@
 />
 <div class="outcome" class:bad={failed} class:ok={!failed}>
   {#if failed}
-    <strong>LOGICAL ERROR.</strong> Correction + error wrap the line -- the
+    <strong>LOGICAL ERROR.</strong> Correction + error wrap the line: the
     residual is the logical operator. The matcher chose the cheaper pairing,
     but the true chain was longer than half the code, so it guessed the wrong
     side.
@@ -69,7 +69,7 @@
 </div>
 <div class="residual mono">
   residual = {residual.map((b) => (b ? "1" : "0")).join("")}
-  {residual.every((b) => !b) ? "(identity)" : residual.every((b) => b) ? "(spans line -> logical!)" : ""}
+  {residual.every((b) => !b) ? "(identity)" : residual.every((b) => b) ? "(spans line -> logical)" : ""}
 </div>
 
 <style>

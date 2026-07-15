@@ -129,21 +129,21 @@
 <p class="verdict-prose">
   A min-weight decoder commits to the single most probable pattern,
   <span class="mono">{mwVerdict.bits ? configLabel({ bits: mwVerdict.bits }) : "--"}</span>
-  (probability <span class="mono">{mwVerdict.prob.toExponential(2)}</span>), and reads its class --
+  (probability <span class="mono">{mwVerdict.prob.toExponential(2)}</span>), and reads its class,
   <strong style="color:{mwVerdict.logical === 0 ? C.ok : C.accent3}"
     >{mwVerdict.logical === null ? "--" : classLabel(mwVerdict.logical)}</strong
-  > -- off that one error. But maximum likelihood compares the
+  >, off that one error. But maximum likelihood compares the
   <em>total</em> weight of each class. Class
   <strong style="color:{degVerdict === 0 ? C.ok : C.accent3}">{classLabel(degVerdict)}</strong>
   gathers <strong>{winClassConfigs.length}</strong> consistent patterns summing to
-  <span class="mono">{winSum.toExponential(2)}</span> -- a
+  <span class="mono">{winSum.toExponential(2)}</span>, a
   <strong>{degBoost.toFixed(1)}×</strong> boost over its single best member.
   {#if degDisagree}
     <strong style="color:{C.accent}"
       >Here that summed weight overturns the min-weight verdict</strong
-    > -- the two decoders genuinely disagree, and MLD is the optimal answer.
+    >: the two decoders disagree, and MLD is the optimal answer.
   {:else}
-    Raise the measurement error and the boosted class will overtake the single cheapest error -- the
+    Raise the measurement error and the boosted class will overtake the single cheapest error, and the
     two decoders flip apart.
   {/if}
 </p>

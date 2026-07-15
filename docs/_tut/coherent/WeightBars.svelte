@@ -2,7 +2,7 @@
   // A signed bar chart of quasiprobability branch weights. Zero sits on a center
   // baseline; positive weights grow up (accent), negative weights grow down and are
   // painted with C.bad -- the visual "sign problem". Each bar is labelled with its
-  // Clifford core and its exact value. Pure SVG, animated by CSS transitions on the
+  // Clifford core and its value. Pure SVG, animated by CSS transitions on the
   // bar geometry so dragging a slider sweeps the bars smoothly.
   import { C, withAlpha } from "$lib/colors";
   import type { Branch } from "./channel";

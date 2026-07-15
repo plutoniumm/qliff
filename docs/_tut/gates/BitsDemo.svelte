@@ -41,7 +41,7 @@
     <div class="tdout">
       <PauliCells p={bitsPauli} labels={["q"]} />
     </div>
-    <p class="hint">Toggle the bits -- a whole tableau row is just many of these side by side.</p>
+    <p class="hint">Toggle the bits: a whole tableau row is many of these side by side.</p>
   </div>
 </div>
 

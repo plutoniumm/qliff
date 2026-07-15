@@ -1,5 +1,5 @@
 // Quasiprobability decompositions of qliff's NON-Pauli stabilizer channels.
-// These mirror qliff/noise/channel.py EXACTLY -- every weight printed on the page
+// These mirror qliff/noise/channel.py: every weight printed on the page
 // is the real value the simulator would draw a branch from. A "branch" is a signed
 // weight attached to a list of Clifford ops; for Pauli channels the weights are a
 // genuine probability distribution (>= 0, sum 1), for these non-Pauli channels the
@@ -60,7 +60,7 @@ export function depolarizeBranches(p: number): Branch[] {
   ];
 }
 
-// Total weight Sum(w): for any honest channel this is exactly 1 (trace-preserving).
+// Total weight Sum(w): 1 for any trace-preserving channel.
 export function totalWeight(branches: Branch[]): number {
   return branches.reduce((s, b) => s + b.weight, 0);
 }

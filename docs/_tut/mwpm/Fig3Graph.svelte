@@ -79,7 +79,7 @@
     </button>
   {/each}
   {#if candidateEdges.length === 0}
-    <span class="tag">no defects -- perfect syndrome</span>
+    <span class="tag">no defects: perfect syndrome</span>
   {/if}
 </div>
 <div class="row">

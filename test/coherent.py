@@ -195,7 +195,7 @@ class CoherentTests(Question):
         On a sampled rotated-surface-code memory the coherent decoder's batch
         predictions match exact MLD shot for shot.
         """
-        circuit = rotated_surface_code(3, 3, 0.07)
+        circuit = rotated_surface_code(3, 3, 3, 0.07)
         dem = DetectorErrorModel(circuit)
         dets, _obs = DetectorSampler(circuit).sample(800, seed=11)
         mld = make_decoder("mld", dem).decode_batch(dets)

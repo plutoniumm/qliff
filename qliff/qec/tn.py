@@ -249,7 +249,9 @@ class TensorNetworkDecoder(BatchDecoder):
         for d in range(self.num_detectors):
             legs = [_dleg(i, d) for i in self._det_incidence[d]]
             target = int(syndrome[d])
-            tensors.append(Tensor(parity(len(legs), target, dtype=self._dtype), tuple(legs)))
+            tensors.append(
+                Tensor(parity(len(legs), target, dtype=self._dtype), tuple(legs))
+            )
 
         return tensors
 

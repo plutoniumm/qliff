@@ -1,11 +1,12 @@
 <script lang="ts">
-  // The single-shot stabilizer-trajectory stepper (centerpiece of section 03).
-  // Self-contained: it owns the seed / error-rate / location controls itself and
-  // builds the tiny rep-code circuit internally, so it lives as one standalone
-  // island in the markdown page. At each noise location it draws
-  // threshold = rng()*gamma and walks the branches' cumulative |w|, lighting the
-  // branch that covers the draw. The Scrubber selects how many locations we have
-  // revealed (0..nLoc; 0 = nothing fired).
+  // The single-shot trajectory stepper for the "How the simulator picks a
+  // branch" section: four qubits, each with one AMPLITUDE_DAMP(p) location.
+  // Self-contained: it owns the seed / damping-p / location controls itself and
+  // builds the tiny circuit internally, so it lives as one standalone island in
+  // the markdown page. At each noise location it draws threshold = rng()*gamma
+  // and walks the branches' cumulative |q|, lighting the branch whose slot
+  // covers the draw; the running weight multiplies sign(q)*gamma. The Scrubber
+  // selects how many locations we have revealed (0..nLoc; 0 = nothing rolled).
   //
   // Everything here is a pure $derived of (circuit, seed, loc): no $effect writes
   // back into state, so there is no risk of effect_update_depth white-screens.
@@ -15,24 +16,25 @@
   import Scrubber from "$lib/Scrubber.svelte";
   import { runTrajectory, makeChannel, type Circuit, type Branch, type NoiseFire } from "./channels";
 
-  // controls owned by this island (previously the parent page's prose-level
-  // state -- moved in so the interactive is self-contained in the markdown page).
-  let seed = $state(7);
-  let p = $state(0.18);
+  // controls owned by this island so the interactive is self-contained in the
+  // markdown page. seed 73 at p = 0.1 draws I, Z, R, I: it shows the negative
+  // Z factor and the reset within one shot, matching the page's walkthrough.
+  let seed = $state(73);
+  let p = $state(0.1);
   let loc = $state(0);
 
   const qubitLabels = ["q0", "q1", "q2", "q3"];
 
-  // A small rep-code-style round: 4 data qubits in a line, each gets a
-  // DEPOLARIZE1 location after preparation; 3 Z-checks read parities of
+  // A small rep-code-style round: 4 data qubits in a line, each gets one
+  // AMPLITUDE_DAMP location after preparation; 3 Z-checks read parities of
   // neighbours. We only need the noise locations to show a trajectory.
   function buildRepCircuit(nData: number, rate: number): Circuit {
     const instructions = [];
     for (let q = 0; q < nData; q += 1) {
       instructions.push({
         type: "noise" as const,
-        channel: makeChannel("DEPOLARIZE1", rate, [q]),
-        label: `DEPOLARIZE1 q${q}`,
+        channel: makeChannel("AMPLITUDE_DAMP", rate, [q]),
+        label: `AMPLITUDE_DAMP q${q}`,
       });
     }
     // Z-checks between neighbours -> detectors over (q, q+1).
@@ -94,8 +96,11 @@
     return 0;
   }
 
-  // colour for a fired Pauli branch.
+  // colour for a fired branch; the reset branch R gets its own colour.
   function branchColor(pauli: string): string {
+    if (pauli.includes("R")) {
+      return C.y;
+    }
     const p = pauli.replace(/[^XYZ]/g, "");
     if (p.includes("X")) {
       return C.x;
@@ -127,7 +132,7 @@
 <div class="traj">
   <div class="traj-controls">
     <Slider bind:value={seed} min={0} max={9999} step={1} label="seed" />
-    <Slider bind:value={p} min={0.02} max={0.4} step={0.005} label="error rate p" format={(v) => v.toFixed(3)} />
+    <Slider bind:value={p} min={0.02} max={0.4} step={0.005} label="damping p" format={(v) => v.toFixed(3)} />
     <Scrubber bind:value={loc} min={0} max={nLoc} label="location" />
   </div>
 

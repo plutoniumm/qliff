@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ./do develop | build | test | bench | deploy | lint | docs | studio | serve | dev | tex | wheels
+# ./do develop | build | test | bench | deploy | lint | studio | serve | dev
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -84,15 +84,17 @@ build_release() {
   cp target/release/lib_core.dylib qliff/_core.abi3.so
 }
 
+# build EVERYTHING: all cp311-abi3 wheels (macOS + Linux + Windows, x86_64 and
+# arm in each) into wheelhouse/ plus the sdist into dist/, WITHOUT uploading --
+# the same build as `deploy`, stopping before twine. (Linux wheels need a
+# container engine; colima is started on demand.)
 build() {
-  has python cargo rustc
-  ensure_build_deps
-  cd "$ROOT"
-  studio  # the wheel ships the built SPA (qliff/server/static)
-  rm -rf build dist qliff.egg-info
-  python setup.py sdist bdist_wheel
+  build_local_wheels
+  echo ">> wheels in $ROOT/wheelhouse (not uploaded). sdist in $ROOT/dist." >&2
 }
 
+# MDR report tables for the docs land in docs/tests by running:
+#   MDR_OUT=$PWD/docs/tests ./do test
 test_() {
   develop
   run_dir "$ROOT/test" hard
@@ -105,13 +107,16 @@ bench() {
 }
 
 # --- cross-platform wheels (built locally, shipped straight to PyPI) --------
-# `deploy` builds cp311-abi3 wheels for macOS (arm64 + x86_64) AND Linux
-# (x86_64 + aarch64) right here, then twine-uploads them. No GitHub. macOS
-# wheels build directly with this Python (cibuildwheel needs a python.org
-# framework build that isn't installed); Linux wheels build in manylinux
-# containers via cibuildwheel + colima. One abi3 wheel per platform covers every
-# Python >= 3.11 (tag set by setup.py's bdist_wheel options). Windows wheels
-# CANNOT be produced on macOS -- those users install the sdist. No pyproject.toml.
+# `build` makes cp311-abi3 wheels for macOS (arm64 + x86_64), Linux
+# (x86_64 + aarch64) AND Windows (x86_64 + arm64) right here; `deploy`
+# twine-uploads whatever `build` produced (it never rebuilds). No GitHub, no
+# CI. macOS wheels build directly with this Python
+# (cibuildwheel needs a python.org framework build that isn't installed); Linux
+# wheels build in manylinux containers via cibuildwheel + colima; Windows wheels
+# are cross-compiled with cargo-xwin (xwin fetches the MSVC CRT + Windows SDK,
+# lld does the linking, pyo3's generate-import-lib synthesizes the python3.dll
+# import lib). One abi3 wheel per platform covers every Python >= 3.11 (tag set
+# by setup.py's bdist_wheel options). No pyproject.toml.
 
 ensure_cibw() {
   python -c "import cibuildwheel" >/dev/null 2>&1 || pip install -q -U cibuildwheel
@@ -123,6 +128,17 @@ ensure_rust() {
   rustup show active-toolchain >/dev/null 2>&1 || rustup default stable
   rustup target list --installed 2>/dev/null | grep -q '^x86_64-apple-darwin$' \
     || rustup target add x86_64-apple-darwin
+}
+
+# cargo-xwin + the two windows-msvc rust targets for the Windows cross builds
+# (idempotent). xwin downloads the MSVC CRT + Windows SDK into its cache on
+# first use; Microsoft's license applies to that download.
+ensure_xwin() {
+  rustup target list --installed 2>/dev/null | grep -q '^x86_64-pc-windows-msvc$' \
+    || rustup target add x86_64-pc-windows-msvc
+  rustup target list --installed 2>/dev/null | grep -q '^aarch64-pc-windows-msvc$' \
+    || rustup target add aarch64-pc-windows-msvc
+  command -v cargo-xwin >/dev/null 2>&1 || cargo install --locked cargo-xwin
 }
 
 # bring the local container engine (colima) up if it isn't; needed for the Linux
@@ -167,12 +183,51 @@ build_macos_wheels() {
     python setup.py bdist_wheel -d wheelhouse
 }
 
+# setuptools-rust names the cross-built extension with the HOST suffix
+# (_core.abi3.so); Windows CPython only imports `.pyd`. Repack the wheel with
+# the binary renamed -- `wheel pack` recomputes RECORD hashes.
+rename_ext_in_wheel() {
+  local whl="$1" tmp dir
+  tmp="$(mktemp -d)"
+  python -m wheel unpack "$whl" -d "$tmp"
+  dir="$(echo "$tmp"/qliff-*)"
+  mv "$dir/qliff/_core.abi3.so" "$dir/qliff/_core.pyd"
+  rm "$whl"
+  python -m wheel pack "$dir" -d "$ROOT/wheelhouse"
+  rm -rf "$tmp"
+}
+
+# cross-compile the two Windows wheels on macOS. The CARGO shim (ci/cargo-xwin.sh)
+# routes compile commands through `cargo xwin`; _PYTHON_HOST_PLATFORM forges the
+# wheel tag the same way the macOS x86_64 cross build does. Nothing here can RUN
+# the result -- smoke-test on a real Windows box if in doubt.
+build_windows_wheels() {
+  export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+
+  rm -rf build
+  CARGO="$ROOT/ci/cargo-xwin.sh" CARGO_BUILD_TARGET=x86_64-pc-windows-msvc \
+    _PYTHON_HOST_PLATFORM=win-amd64 \
+    python setup.py bdist_wheel -d wheelhouse
+  rename_ext_in_wheel wheelhouse/qliff-*-win_amd64.whl
+
+  rm -rf build
+  CARGO="$ROOT/ci/cargo-xwin.sh" CARGO_BUILD_TARGET=aarch64-pc-windows-msvc \
+    _PYTHON_HOST_PLATFORM=win-arm64 \
+    python setup.py bdist_wheel -d wheelhouse
+  rename_ext_in_wheel wheelhouse/qliff-*-win_arm64.whl
+}
+
 # build every buildable backend IN PARALLEL into wheelhouse/, + an sdist into
 # dist/. macOS always; Linux (x86_64, aarch64) when the container engine is up.
 # Does NOT upload.
 build_local_wheels() {
   has python cargo
+  # the conda env ships its own rust toolchain WITHOUT the cross-target std
+  # libs (x86_64-apple-darwin, *-pc-windows-msvc). ensure_rust/ensure_xwin
+  # install targets into RUSTUP's toolchain, so rustup's cargo must win here.
+  export PATH="$HOME/.cargo/bin:$PATH"
   ensure_rust
+  ensure_xwin
   ensure_build_deps
   studio                       # SPA -> qliff/server/static (shipped in each wheel)
   cd "$ROOT"
@@ -182,9 +237,9 @@ build_local_wheels() {
 
   local pids=() names=() rc=0 i
 
-  echo ">> building macOS wheels (arm64 + x86_64) ..." >&2
-  build_macos_wheels >wheelhouse/_logs/macos.log 2>&1 &
-  pids+=($!); names+=(macos)
+  echo ">> building macOS + Windows wheels (sequential -- shared build/ tree) ..." >&2
+  { build_macos_wheels && build_windows_wheels; } >wheelhouse/_logs/macos-windows.log 2>&1 &
+  pids+=($!); names+=(macos-windows)
 
   if ensure_container; then
     ensure_cibw
@@ -219,8 +274,12 @@ build_local_wheels() {
   ls -1 wheelhouse/*.whl >&2
 }
 
+# upload whatever `./do build` produced -- no rebuild here.
 deploy() {
-  build_local_wheels
+  has python
+  cd "$ROOT"
+  ls wheelhouse/*.whl >/dev/null 2>&1 || { echo "no wheels in wheelhouse/ -- run ./do build first" >&2; exit 1; }
+  ls dist/*.tar.gz >/dev/null 2>&1 || { echo "no sdist in dist/ -- run ./do build first" >&2; exit 1; }
   pip install -q twine
   twine check wheelhouse/*.whl dist/*.tar.gz
 
@@ -272,49 +331,12 @@ lint() {
   fi
 }
 
-docs() {
-  cd "$ROOT/docs"
-
-  case "${1:-build}" in
-    dev)
-      has npm
-      npm run dev
-      ;;
-    build)
-      has npm
-      npm run build   # vitepress build (Svelte explainers mount as islands in the routes)
-      # Smoke the built tutorial routes in a real Chromium (white-screen / reactive
-      # loop guard), mirroring `./do studio`. Skipped when puppeteer is absent.
-      if [ -d "$ROOT/docs/node_modules/puppeteer" ]; then
-        node test/smoke.mjs
-      else
-        echo ">> tutorials smoke skipped (puppeteer not installed)" >&2
-      fi
-      ;;
-    test)
-      MDR_OUT="$ROOT/docs/tests" test_
-      ;;
-    *)
-      echo "usage: ./do docs {dev|build|test}" >&2
-      exit 1
-      ;;
-  esac
-}
-
 # build the Studio frontend into qliff/server/static (shipped in the wheel).
-# After building, run the headless puppeteer smoke test (boots the SPA in a real
-# Chromium, drives the Builder) to catch white-screen reactive loops -- skipped
-# when puppeteer isn't installed (e.g. CI wheel builds) so it never blocks them.
 studio() {
   has npm
   cd "$ROOT/studio"
   [ -d node_modules ] || npm install
   npm run build
-  if [ -d node_modules/puppeteer ]; then
-    node test/smoke.mjs
-  else
-    echo ">> studio smoke skipped (puppeteer not installed)" >&2
-  fi
 }
 
 # launch the Studio web server (the `qliff-server` command) from the source tree.
@@ -339,27 +361,6 @@ dev() {
   npm run dev
 }
 
-# compile a LaTeX/beamer file with tectonic. Args are passed straight through, so
-# any path works (incl. files in subdirs; tectonic resolves figs/ relative to the
-# file and writes the pdf next to it) and you can append tectonic flags.
-tex() {
-  has tectonic
-  if [ "$#" -eq 0 ]; then
-    echo "usage: ./do tex <file.tex> [tectonic args]" >&2
-    exit 1
-  fi
-  tectonic "$@"
-}
-
-# build the cross-platform wheels locally (macOS + Linux) WITHOUT uploading --
-# the same build as `deploy`, just stopping before twine. Wheels land in
-# wheelhouse/, the sdist in dist/. Use it to inspect/test before `./do deploy`.
-# (Linux wheels need a running container engine: `colima start`.)
-wheels() {
-  build_local_wheels
-  echo ">> wheels in $ROOT/wheelhouse (not uploaded). sdist in $ROOT/dist." >&2
-}
-
 case "${1:-}" in
   develop) develop ;;
   build)   build ;;
@@ -367,14 +368,11 @@ case "${1:-}" in
   bench)   bench ;;
   deploy)  deploy ;;
   lint)    shift; lint "$@" ;;
-  docs)    shift; docs "$@" ;;
   studio)  studio ;;
   serve)   shift; serve "$@" ;;
   dev)     dev ;;
-  tex)     shift; tex "$@" ;;
-  wheels)  shift; wheels "$@" ;;
   *)
-    echo "usage: ./do {develop|build|test|bench|deploy|lint|docs|studio|serve|dev|tex|wheels}" >&2
+    echo "usage: ./do {develop|build|test|bench|deploy|lint|studio|serve|dev}" >&2
     exit 1
     ;;
 esac

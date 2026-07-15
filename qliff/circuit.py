@@ -23,9 +23,7 @@ def _lower_gates(name: str, targets: Targets) -> list[tuple[int, int, int]]:
     # Sampler compilers so the pair-walk lives in one place.
     op = GATE_OPCODE[name]
     if name in GATES_2:
-        return [
-            (op, targets[k], targets[k + 1]) for k in range(0, len(targets), 2)
-        ]
+        return [(op, targets[k], targets[k + 1]) for k in range(0, len(targets), 2)]
 
     return [(op, q, 0) for q in targets]
 

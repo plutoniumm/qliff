@@ -7,7 +7,7 @@
   // whatever gates/rotation), an optional `ghost` (the vector before the live
   // rotation) and `sweep` (theta) so we can draw the arc. We only UPDATE the
   // existing meshes on reactive change -- we never rebuild the scene per tick, and
-  // we keep exactly one WebGL context, disposed cleanly on unmount.
+  // we keep a single WebGL context, disposed cleanly on unmount.
   import { onMount, onDestroy } from "svelte";
   import * as THREE from "three";
   import { C } from "$lib/colors";

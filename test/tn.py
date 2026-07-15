@@ -154,7 +154,7 @@ class MldTests(Question):
         """
         On a graphlike surface code MLD is never worse than MWPM (it is optimal).
         """
-        circuit = rotated_surface_code(3, 3, 0.07)
+        circuit = rotated_surface_code(3, 3, 3, 0.07)
         dem = DetectorErrorModel(circuit)
         dets, obs = DetectorSampler(circuit).sample(2500, seed=11)
         mwpm = 1.0 - logical_fidelity(make_decoder("mwpm", dem).decode_batch(dets), obs)
@@ -210,7 +210,7 @@ class MldTests(Question):
         A bonded MLD at modest chi reproduces exact decode_batch on sampled
         rotated-surface d=3 shots spanning many distinct syndromes.
         """
-        circuit = rotated_surface_code(3, 3, 0.06)
+        circuit = rotated_surface_code(3, 3, 3, 0.06)
         dem = DetectorErrorModel(circuit)
         dets, obs = DetectorSampler(circuit).sample(500, seed=4)
         exact = MaxLikelihoodDecoder(dem).decode_batch(dets)
@@ -225,7 +225,7 @@ class MldTests(Question):
         A bonded MLD returns predictions on rotated-surface d=5 (bounded bond),
         where the exact contraction's treewidth would otherwise explode.
         """
-        circuit = rotated_surface_code(5, 2, 0.05)
+        circuit = rotated_surface_code(5, 5, 2, 0.05)
         dem = DetectorErrorModel(circuit)
         dets, obs = DetectorSampler(circuit).sample(6, seed=2)
         preds = MaxLikelihoodDecoder(dem, max_bond=8).decode_batch(dets)

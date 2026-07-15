@@ -46,13 +46,13 @@
   {#if repFrame.satisfied}
     {#if repCorrect}
       &#10003; converged at iteration {repFrame.iter}: decoded error reproduces the
-      syndrome -- and it matches the true error.
+      syndrome and matches the true error.
     {:else}
       &#10003; syndrome reproduced at iteration {repFrame.iter} (a valid, if degenerate,
       explanation).
     {/if}
   {:else}
-    ... still settling -- the hard decision doesn't yet reproduce the syndrome.
+    ... still settling: the hard decision doesn't yet reproduce the syndrome.
   {/if}
 </div>
 

@@ -118,10 +118,14 @@ class ColorCodeTests(Question):
         for fam in FAMILIES:
             c = color.color_code(fam, 3, 3, 0.04)
             dets, obs = DetectorSampler(c).sample(1500, seed=7)
-            ler = 1.0 - logical_fidelity(make_circuit_decoder("bposd", c).decode_batch(dets), obs)
+            ler = 1.0 - logical_fidelity(
+                make_circuit_decoder("bposd", c).decode_batch(dets), obs
+            )
             trivial = 1.0 - logical_fidelity(np.zeros_like(obs), obs)
 
-            self.assertLess(ler, trivial - 0.03, msg=f"{fam} LER {ler:.3f} !< {trivial:.3f}")
+            self.assertLess(
+                ler, trivial - 0.03, msg=f"{fam} LER {ler:.3f} !< {trivial:.3f}"
+            )
 
     def test_color_decoder_corrects_hex(self):
         """
@@ -130,10 +134,14 @@ class ColorCodeTests(Question):
         """
         c = color.color_code("hex_color", 3, 3, 0.04)
         dets, obs = DetectorSampler(c).sample(1500, seed=5)
-        ler = 1.0 - logical_fidelity(make_circuit_decoder("color", c).decode_batch(dets), obs)
+        ler = 1.0 - logical_fidelity(
+            make_circuit_decoder("color", c).decode_batch(dets), obs
+        )
         trivial = 1.0 - logical_fidelity(np.zeros_like(obs), obs)
 
-        self.assertLess(ler, trivial - 0.03, msg=f"color LER {ler:.3f} !< {trivial:.3f}")
+        self.assertLess(
+            ler, trivial - 0.03, msg=f"color LER {ler:.3f} !< {trivial:.3f}"
+        )
 
 
 if __name__ == "__main__":

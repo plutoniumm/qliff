@@ -1,6 +1,6 @@
 <script lang="ts">
   // Self-contained LER-vs-p sweep for one distance: owns the d/shots/seed sliders,
-  // the exact analytic curve, and nine seeded Monte-Carlo points with binomial
+  // the analytic curve, and nine seeded Monte-Carlo points with binomial
   // error bars -- the (p, ler, stderr) triples qliff's sweep yields.
   import Slider from "$lib/Slider.svelte";
   import SweepPlot from "./SweepPlot.svelte";
@@ -24,7 +24,13 @@
 
 <div class="prose-controls">
   <Slider bind:value={swD} min={3} max={11} step={2} label="code distance d" />
-  <Slider bind:value={swShots} min={200} max={20000} step={200} label="shots per point" />
+  <Slider
+    bind:value={swShots}
+    min={200}
+    max={20000}
+    step={200}
+    label="shots per point"
+  />
   <Slider bind:value={swSeed} min={1} max={40} step={1} label="seed" />
 </div>
 <SweepPlot curve={swCurve} points={swPoints} pMin={swPMin} pMax={swPMax} />

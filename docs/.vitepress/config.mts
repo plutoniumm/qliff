@@ -39,9 +39,9 @@ export default defineConfig({
     nav: [
       { text: 'Home', link: '/' },
       { text: 'Getting Started', link: '/getting-started' },
-      // Tutorials are now first-class VitePress routes (Svelte explainers mounted
-      // as islands inside each markdown page) -- ordinary in-app links.
-      { text: 'Tutorials', link: '/tutorials/' },
+      // Tutorials are first-class VitePress routes (Svelte explainers mounted
+      // as islands inside each markdown page); ordinary in-app links.
+      { text: 'Tutorials', link: '/tutorials/gates' },
       { text: 'Examples', link: '/examples/' },
     ],
 
@@ -72,7 +72,6 @@ export default defineConfig({
         // drives VitePress' native prev/next pager across the seven pages.
         text: 'Tutorials',
         items: [
-          { text: 'Overview', link: '/tutorials/' },
           { text: '01 · Gates & CX', link: '/tutorials/gates' },
           { text: '02 · MWPM', link: '/tutorials/mwpm' },
           { text: '03 · Belief propagation', link: '/tutorials/bp' },

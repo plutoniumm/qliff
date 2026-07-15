@@ -33,7 +33,7 @@
 </div>
 <p style="margin:10px 0 0; font-size:14px;">
   Two logical observables. Click any bit. The shot counts as wrong the moment a single
-  column mismatches -- so <span class="mono">10</span> vs <span class="mono">11</span> already fails.
+  column mismatches, so <span class="mono">10</span> vs <span class="mono">11</span> already fails.
 </p>
 
 <style>

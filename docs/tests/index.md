@@ -47,9 +47,3 @@ A one-liner to refresh the reports and build the static site:
 ```sh
 MDR_OUT="$(pwd)/docs/tests" ./do test && (cd docs && npm run build)
 ```
-
-If you have added a `docs` subcommand to `./do`, this becomes:
-
-```sh
-MDR_OUT="$(pwd)/docs/tests" ./do test && ./do docs build
-```

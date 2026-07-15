@@ -65,7 +65,7 @@ Pauli channel — estimate it with `expect` (`estimate` reweights automatically)
 `expect` draws one branch per noise location and reweights each trajectory by
 $\operatorname{sign}(q_\mu)\,\gamma$. On Pauli noise every weight is $1$, so it is
 plain Monte-Carlo. With `stratify=True` it rewrites the estimate as
-$F = \sum_k P(k)\,F_k$: $P(k)$ is the exact Poisson-binomial probability of $k$
+$F = \sum_k P(k)\,F_k$: $P(k)$ is a Poisson-binomial probability of $k$
 faulty locations, and $F_k$ the conditional estimate. Since $F_k$ varies slowly
 with $k$, this cuts variance sharply at the same shot budget.
 

@@ -15,6 +15,7 @@ def _emit_z_memory(
     p: float,
     x_frame: Iterable[int] = (),
     universal_h: bool = False,
+    prep: bool = False,
 ) -> Circuit:
     """
     Shared Z-memory syndrome-extraction emitter for every code family (surface,
@@ -26,33 +27,43 @@ def _emit_z_memory(
     bare data->ancilla CX ladder; any other check (a star, or a mixed XZZX face)
     reads with a |+> ancilla and a per-corner CX / CZ. `universal_h` forces that
     ancilla-Hadamard form on every check (the non-CSS variants), and `x_frame` lists
-    the data qubits initialised |+> and read back in the X basis.
+    the data qubits initialised |+> and read back in the X basis. `prep` runs one
+    NOISELESS extraction round first (no detectors) so noise always hits a projected
+    code state -- without it the first noise layer acts on the |0>/|+> product
+    state, which is a fixed point of amplitude damping, so an AD round is wasted.
     """
     c = Circuit()
     width = len(stabilizers)
 
+    def extract(anc, corners):
+        if not universal_h and all(pauli == "Z" for _q, pauli in corners):
+            for q, _pauli in corners:
+                c.append("CX", [q, anc])
+        else:
+            c.append("H", [anc])
+            for q, pauli in corners:
+                if pauli == "X":
+                    c.append("CX", [anc, q])
+                else:
+                    c.append("CZ", [anc, q])
+            c.append("H", [anc])
+        c.append("MR", [anc])
+
     for q in x_frame:
         c.append("H", [q])
+
+    if prep:
+        for _primary, anc, corners in stabilizers:
+            extract(anc, corners)
 
     for r in range(rounds):
         apply_data_noise(c.append, noise_channel, range(num_data), p)
 
         for primary, anc, corners in stabilizers:
-            if not universal_h and all(pauli == "Z" for _q, pauli in corners):
-                for q, _pauli in corners:
-                    c.append("CX", [q, anc])
-            else:
-                c.append("H", [anc])
-                for q, pauli in corners:
-                    if pauli == "X":
-                        c.append("CX", [anc, q])
-                    else:
-                        c.append("CZ", [anc, q])
-                c.append("H", [anc])
-            c.append("MR", [anc])
+            extract(anc, corners)
             if not primary:
                 continue
-            if r == 0:
+            if r == 0 and not prep:
                 c.detector(-1)
             else:
                 c.detector(-1, -1 - width)
@@ -192,9 +203,13 @@ def resolve_tiles(
 
     kinds = {tile.get("kind", "square") for tile in tiles}
     if not kinds <= {"square", "tri", "hex"}:
-        raise ValueError(f"unknown tile kind(s) {sorted(kinds - {'square', 'tri', 'hex'})}")
+        raise ValueError(
+            f"unknown tile kind(s) {sorted(kinds - {'square', 'tri', 'hex'})}"
+        )
     if len(kinds) != 1:
-        raise ValueError(f"mixed tile kinds {sorted(kinds)}; draw one lattice at a time")
+        raise ValueError(
+            f"mixed tile kinds {sorted(kinds)}; draw one lattice at a time"
+        )
 
     rows_seen = [int(tile["row"]) for tile in tiles]
     cols_seen = [int(tile["col"]) for tile in tiles]

@@ -36,14 +36,14 @@ export interface RepCode {
 // i+1..j (the data qubits strictly between the two gaps), a chain of length
 // j-i. A defect at check i to the LEFT boundary flips qubits 0..i (length i+1);
 // to the RIGHT boundary flips qubits i+1..d-1 (length d-1-i).
-export function edgeWeight(p: number): number {
+export function edgeWeight (p: number): number {
   const pc = Math.min(Math.max(p, 1e-9), 0.5 - 1e-9);
 
   return Math.log((1 - pc) / pc);
 }
 
 // Number of data qubits the shortest chain between two graph nodes flips.
-export function chainLength(a: number, b: number, d: number): number {
+export function chainLength (a: number, b: number, d: number): number {
   // boundary <-> boundary never appears in a real matching; guard anyway.
   if (a === LEFT && b === RIGHT) {
     return d;
@@ -63,8 +63,8 @@ export function chainLength(a: number, b: number, d: number): number {
   return Math.abs(a - b);
 }
 
-// The exact set of data qubits flipped by the chain joining two graph nodes.
-export function chainQubits(a: number, b: number, d: number): number[] {
+// The set of data qubits flipped by the chain joining two graph nodes.
+export function chainQubits (a: number, b: number, d: number): number[] {
   const out: number[] = [];
   if ((a === LEFT && b === RIGHT) || (a === RIGHT && b === LEFT)) {
     for (let q = 0; q < d; q += 1) {
@@ -103,7 +103,7 @@ export function chainQubits(a: number, b: number, d: number): number[] {
 // open boundaries the "checks" beyond the ends are the virtual boundary nodes
 // and never fire on their own; an odd parity at an end is absorbed by matching a
 // defect to that boundary.
-export function syndrome(errors: boolean[]): number[] {
+export function syndrome (errors: boolean[]): number[] {
   const d = errors.length;
   const defects: number[] = [];
   for (let i = 0; i < d - 1; i += 1) {
@@ -123,7 +123,7 @@ export interface MatchResult {
 }
 
 // Pairing cost in *weight* units between two graph nodes.
-function pairWeight(a: number, b: number, d: number, w: number): number {
+function pairWeight (a: number, b: number, d: number, w: number): number {
   return chainLength(a, b, d) * w;
 }
 
@@ -138,10 +138,10 @@ function pairWeight(a: number, b: number, d: number, w: number): number {
 // later unmatched defect. This covers all perfect matchings on the graph where
 // boundary nodes may be used any number of times. d <= ~12 keeps this trivial
 // for teaching.
-export function minWeightMatching(defects: number[], d: number, p: number): MatchResult {
+export function minWeightMatching (defects: number[], d: number, p: number): MatchResult {
   const w = edgeWeight(p);
 
-  function solve(remaining: number[]): { pairs: [number, number][]; weight: number } {
+  function solve (remaining: number[]): { pairs: [number, number][]; weight: number } {
     if (remaining.length === 0) {
       return { pairs: [], weight: 0 };
     }
@@ -181,7 +181,7 @@ export function minWeightMatching(defects: number[], d: number, p: number): Matc
 }
 
 // Turn a list of matched pairs into a full correction + chain summary.
-export function finishMatch(
+export function finishMatch (
   pairs: [number, number][],
   weight: number,
   d: number,
@@ -203,7 +203,7 @@ export function finishMatch(
 
 // Cost (in weight units) of an ARBITRARY user-supplied matching, for the
 // "beat the optimum" interaction. Pairs may include boundary nodes.
-export function matchingWeight(pairs: [number, number][], d: number, p: number): number {
+export function matchingWeight (pairs: [number, number][], d: number, p: number): number {
   const w = edgeWeight(p);
   let total = 0;
   for (const [a, b] of pairs) {
@@ -223,7 +223,7 @@ export function matchingWeight(pairs: [number, number][], d: number, p: number):
 // For the rep code the logical observable = parity of a single chosen qubit's
 // readout vs a reference; the standard choice is "does the residual chain span
 // the whole line" == parity of (number of residual flips on the left half is
-// odd in a way that crosses). The clean, exact test: residual must have empty
+// odd in a way that crosses). The test: residual must have empty
 // syndrome (correction matched the syndrome), and then it's logical iff the
 // residual flips an odd number of qubits "to the left of a cut", which for the
 // rep code is simply: residual qubit 0 differs from the all-same ground => use
@@ -232,10 +232,10 @@ export function matchingWeight(pairs: [number, number][], d: number, p: number):
 // Concretely and robustly: count how many matched chains cross the LEFT
 // boundary in the *combined* error+correction picture. We compute residual and
 // test whether it equals a logical operator (the all-ones chain spanning the
-// line is the logical X of the rep code) up to stabilisers. Easiest exact test:
+// line is the logical X of the rep code) up to stabilisers. Test:
 // residual has empty syndrome, and parity of residual over the *left-anchored*
 // observable (qubit 0..k) is odd.
-export function logicalFailed(errors: boolean[], correction: boolean[]): boolean {
+export function logicalFailed (errors: boolean[], correction: boolean[]): boolean {
   const d = errors.length;
   const residual: boolean[] = errors.map((e, i) => e !== correction[i]);
   // Must be a valid (closed) operator: empty syndrome.
@@ -253,11 +253,11 @@ export function logicalFailed(errors: boolean[], correction: boolean[]): boolean
 // Brute-force-free helper: list of defect node positions (gap index 0..d-2)
 // mapped to an on-screen x in [0,1] for the matching graph. (Defect i sits at
 // the gap between data qubit i and i+1.)
-export function gapX(i: number, d: number): number {
+export function gapX (i: number, d: number): number {
   // data qubit q at x=(q+0.5)/d centre; gap i between q=i and q=i+1.
   return (i + 1) / d;
 }
 
-export function qubitX(q: number, d: number): number {
+export function qubitX (q: number, d: number): number {
   return (q + 0.5) / d;
 }

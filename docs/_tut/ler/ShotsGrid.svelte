@@ -2,7 +2,7 @@
   // A grid of shots. Each cell shows the decoder's PREDICTED observable flip and
   // the TRUE flip; they match -> success (ok), disagree -> logical error (bad).
   // Click a cell to flip its prediction and watch the running LER update. This is
-  // exactly qliff's verdict: error iff predicted != observed.
+  // qliff's verdict: error iff predicted != observed.
   import { C, withAlpha } from "$lib/colors";
 
   interface Shot {
@@ -58,12 +58,12 @@
     </div>
     <div class="stat big">
       <span class="num" style="color:{C.ok}">{((1 - ler) * 100).toFixed(1)}%</span>
-      <span class="lbl">fidelity = 1 − LER</span>
+      <span class="lbl">fidelity = 1 - LER</span>
     </div>
   </div>
   <p class="hint">
     Each cell reads <span class="mono">predicted / true</span>. Click any cell to flip the decoder's
-    prediction; a mismatch turns it red -- a logical error.
+    prediction; a mismatch turns it red, a logical error.
   </p>
 </div>
 

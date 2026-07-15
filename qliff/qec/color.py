@@ -82,7 +82,9 @@ def _kernel(mat: np.ndarray, n: int) -> np.ndarray:
     return np.array(basis, dtype=np.uint8) if basis else np.zeros((0, n), np.uint8)
 
 
-def _logicals(commute_with: np.ndarray, stabilizers: np.ndarray, n: int) -> list[np.ndarray]:
+def _logicals(
+    commute_with: np.ndarray, stabilizers: np.ndarray, n: int
+) -> list[np.ndarray]:
     """
     A basis of logical operators: vectors that commute with every `commute_with`
     check (live in its kernel) yet are NOT themselves in the `stabilizers` rowspace.
@@ -192,9 +194,7 @@ def _edge_index(triangles: list[tuple[int, int, int]]):
 
         return edges[key]
 
-    tri_edges = [
-        sorted({edge(a, b), edge(b, c), edge(a, c)}) for a, b, c in triangles
-    ]
+    tri_edges = [sorted({edge(a, b), edge(b, c), edge(a, c)}) for a, b, c in triangles]
 
     return len(edges), edges, tri_edges
 
@@ -270,18 +270,21 @@ def _assemble(
     hx = _rows(x_supports, n)
     hz = _rows(z_supports, n)
     if x_supports and z_supports and int(((hx @ hz.T) % 2).sum()) != 0:
-        raise ValueError("invalid CSS code: an X-stabilizer and Z-stabilizer anticommute")
+        raise ValueError(
+            "invalid CSS code: an X-stabilizer and Z-stabilizer anticommute"
+        )
 
     z_logicals = [_reduce_weight(v, hz) for v in _logicals(hx, hz, n)]
     x_logicals = [_reduce_weight(v, hx) for v in _logicals(hz, hx, n)]
     if not z_logicals:
         raise ValueError("code encodes no logical qubit (patch too small)")
 
-    stabilizers = [("X", sorted(s)) for s in x_supports] + [("Z", sorted(s)) for s in z_supports]
-    observables = (
-        [("Z", sorted(np.nonzero(v)[0].tolist())) for v in z_logicals]
-        + [("X", sorted(np.nonzero(v)[0].tolist())) for v in x_logicals]
-    )
+    stabilizers = [("X", sorted(s)) for s in x_supports] + [
+        ("Z", sorted(s)) for s in z_supports
+    ]
+    observables = [("Z", sorted(np.nonzero(v)[0].tolist())) for v in z_logicals] + [
+        ("X", sorted(np.nonzero(v)[0].tolist())) for v in x_logicals
+    ]
 
     return n, stabilizers, observables
 
@@ -365,20 +368,28 @@ def color_code(
     """
     layout = _LAYOUTS.get(family)
     if layout is None:
-        raise ValueError(f"unknown color family {family!r}; expected one of {sorted(_LAYOUTS)}")
+        raise ValueError(
+            f"unknown color family {family!r}; expected one of {sorted(_LAYOUTS)}"
+        )
 
     num_data, stabilizers, observables = layout(distance)
 
     return build_circuit(num_data, stabilizers, observables, rounds, channel, p)
 
 
-def hex_color_code(distance: int, rounds: int, p: float, channel: str = "DEPOLARIZE1") -> Circuit:
+def hex_color_code(
+    distance: int, rounds: int, p: float, channel: str = "DEPOLARIZE1"
+) -> Circuit:
     return color_code("hex_color", distance, rounds, p, channel)
 
 
-def triangular_code(distance: int, rounds: int, p: float, channel: str = "DEPOLARIZE1") -> Circuit:
+def triangular_code(
+    distance: int, rounds: int, p: float, channel: str = "DEPOLARIZE1"
+) -> Circuit:
     return color_code("triangular", distance, rounds, p, channel)
 
 
-def kagome_code(distance: int, rounds: int, p: float, channel: str = "DEPOLARIZE1") -> Circuit:
+def kagome_code(
+    distance: int, rounds: int, p: float, channel: str = "DEPOLARIZE1"
+) -> Circuit:
     return color_code("kagome", distance, rounds, p, channel)

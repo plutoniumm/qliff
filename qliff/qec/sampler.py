@@ -12,7 +12,9 @@ from ..circuit import Circuit
 
 
 def record_parity(record: list[int], recs: Targets) -> int:
-    """XOR of the measurement record bits at `recs` -- one detector/observable bit."""
+    """
+    XOR of the measurement record bits at `recs`: one detector/observable bit.
+    """
     bit = 0
     for i in recs:
         bit ^= record[i]
@@ -96,6 +98,7 @@ class DetectorSampler(_BaseSampler):
         (shots, n_detectors) and (shots, n_observables).
         """
         dets, obs, _weights = self._sample(shots, seed)
+
         return dets, obs
 
 

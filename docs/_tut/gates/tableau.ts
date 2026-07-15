@@ -1,6 +1,6 @@
 // A faithful, in-browser Clifford "tableau" core for the gates explainer. We
 // model a SINGLE Pauli operator (one tableau row) on n qubits and conjugate it
-// by gates in the Heisenberg picture:  P -> U P U^dagger.  That is exactly how a
+// by gates in the Heisenberg picture:  P -> U P U^dagger.  That is how a
 // stabilizer simulator updates a state -- it never touches 2^n amplitudes, only
 // these (x, z, sign) bits. Every demo number on the page is produced by these
 // functions so the reader can reproduce it by clicking.
@@ -114,7 +114,7 @@ export function stateLabel(p: Pauli): string {
 
 // ----- single-qubit gates (in place) ---------------------------------------
 // Order in every gate: read the original x,z; update sign from them; THEN
-// update x,z. Matching qliff exactly.
+// update x,z, matching qliff.
 
 // H(a): sign ^= x_a & z_a; swap x_a <-> z_a.   (X<->Z, Y->-Y)
 export function applyH(p: Pauli, a: number): void {

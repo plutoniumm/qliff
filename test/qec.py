@@ -88,7 +88,7 @@ class CodeTests(Question):
         """
         The rotated surface-code DEM is non-empty and fully graphlike.
         """
-        dem = DetectorErrorModel(rotated_surface_code(3, 3, 0.01))
+        dem = DetectorErrorModel(rotated_surface_code(3, 3, 3, 0.01))
         mechs = len(dem.mechanisms)
         graphlike = len(dem.graphlike_edges())
 
@@ -102,7 +102,7 @@ class CodeTests(Question):
         """
         The distance-3 surface code has 9 data qubits, 16 detectors and one obs.
         """
-        c = rotated_surface_code(3, 3, 0.01)
+        c = rotated_surface_code(3, 3, 3, 0.01)
 
         self.assertEqual(len(c.detectors), 16, msg="d=3 detector count")
 
@@ -112,7 +112,7 @@ class CodeTests(Question):
         """
         With no noise every surface detector and observable stays at zero.
         """
-        c = rotated_surface_code(3, 3, 0.0)
+        c = rotated_surface_code(3, 3, 3, 0.0)
         dets, obs = DetectorSampler(c).sample(128, seed=0)
 
         self.assertEqual(int(dets.sum()), 0, msg="noiseless detectors must be silent")
@@ -223,13 +223,19 @@ class QECTests(Question):
 # every code-family builder at a small distance, keyed by name -> p->Circuit.
 _BUILDERS = {
     "repetition": lambda ch: repetition_code(5, 3, 0.06, channel=ch),
-    "rotated_surface": lambda ch: rotated_surface_code(3, 3, 0.06, channel=ch),
+    "rotated_surface": lambda ch: rotated_surface_code(3, 3, 3, 0.06, channel=ch),
     "unrotated_surface": lambda ch: unrotated_surface_code(3, 3, 0.06, channel=ch),
     "toric": lambda ch: toric_code(3, 3, 0.06, channel=ch),
 }
 # the five Pauli channels the builders must shape correctly: scalar-arg 1Q ones,
 # the (px,py,pz) vector channel, and the 2-qubit pair channel.
-_PAULI_CHANNELS = ["DEPOLARIZE1", "DEPOLARIZE2", "X_ERROR", "Z_ERROR", "PAULI_CHANNEL_1"]
+_PAULI_CHANNELS = [
+    "DEPOLARIZE1",
+    "DEPOLARIZE2",
+    "X_ERROR",
+    "Z_ERROR",
+    "PAULI_CHANNEL_1",
+]
 
 
 class NoiseChannelTests(Question):
@@ -252,6 +258,7 @@ class NoiseChannelTests(Question):
         apply_data_noise emits one 1Q op per qubit for scalar/vector channels (vector
         arg a 3-tuple) and one 2Q op per adjacent pair for DEPOLARIZE2.
         """
+
         def collect(channel, qubits):
             calls = []
             apply_data_noise(
@@ -262,7 +269,9 @@ class NoiseChannelTests(Question):
 
         vec = collect("PAULI_CHANNEL_1", range(3))
 
-        self.assertEqual([t for _n, t, _a in vec], [(0,), (1,), (2,)], msg="1Q per qubit")
+        self.assertEqual(
+            [t for _n, t, _a in vec], [(0,), (1,), (2,)], msg="1Q per qubit"
+        )
 
         self.assertEqual(vec[0][2], (0.02, 0.02, 0.02), msg="vector arg is the 3-tuple")
 
@@ -274,7 +283,9 @@ class NoiseChannelTests(Question):
 
         x = collect("X_ERROR", range(2))
 
-        self.assertEqual([a for _n, _t, a in x], [0.06, 0.06], msg="scalar arg per qubit")
+        self.assertEqual(
+            [a for _n, _t, a in x], [0.06, 0.06], msg="scalar arg per qubit"
+        )
 
     def test_every_family_every_channel_builds(self):
         """
@@ -299,13 +310,16 @@ class NoiseChannelTests(Question):
         PyMatching's opaque "column has N ones" error.
         """
         hyperedge = {
-            "rotated_surface": rotated_surface_code(3, 3, 0.06, channel="DEPOLARIZE2", edge="odd"),
+            "rotated_surface": rotated_surface_code(
+                3, 3, 3, 0.06, channel="DEPOLARIZE2", edge="odd"
+            ),
             "unrotated_surface": _BUILDERS["unrotated_surface"]("DEPOLARIZE2"),
             "toric": _BUILDERS["toric"]("DEPOLARIZE2"),
         }
         for fam, c in hyperedge.items():
             self.assertFalse(
-                DetectorErrorModel(c).is_graphlike(), msg=f"{fam} should be non-graphlike"
+                DetectorErrorModel(c).is_graphlike(),
+                msg=f"{fam} should be non-graphlike",
             )
             with self.assertRaises(ValueError) as ctx:
                 make_circuit_decoder("mwpm", c)

@@ -40,7 +40,7 @@
     </div>
     <Range bind:value={thetaPlay} min={0} max={2 * Math.PI} step={0.01} label="coherent RZ(θ)" format={fmtAngle} />
     <p class="hint">
-      A <em>tiny</em> θ looks harmless. But the same miscalibration fires every round -- apply it
+      A <em>tiny</em> θ looks harmless. But the same miscalibration fires every round: apply it
       repeatedly and the arrow sweeps all the way around. Coherent errors accumulate in the
       <strong style="color:{C.accent2}">amplitude</strong>, not the probability.
     </p>

@@ -119,18 +119,20 @@ class ResolveTilesTests(Question):
         A drawing must be a single lattice kind; mixing square and tri/hex raises.
         """
         with self.assertRaises(ValueError):
-            resolve_tiles([
-                {
-                    "kind": "square",
-                    "row": 0,
-                    "col": 0,
-                },
-                {
-                    "kind": "tri",
-                    "row": 0,
-                    "col": 1,
-                },
-            ])
+            resolve_tiles(
+                [
+                    {
+                        "kind": "square",
+                        "row": 0,
+                        "col": 0,
+                    },
+                    {
+                        "kind": "tri",
+                        "row": 0,
+                        "col": 1,
+                    },
+                ]
+            )
 
 
 class BuildCircuitTests(Question):

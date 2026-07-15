@@ -254,7 +254,7 @@ class SurfaceVariantTests(Question):
         """
         bad = []
         for pat, st, ed in _rotated_combos():
-            c = rotated_surface_code(3, 3, 0.0, pattern=pat, start=st, edge=ed)
+            c = rotated_surface_code(3, 3, 3, 0.0, pattern=pat, start=st, edge=ed)
             dets, obs = DetectorSampler(c).sample(128, seed=0)
             if int(dets.sum()) + int(obs.sum()) != 0:
                 bad.append(f"rotated/{pat}/{st}/{ed}")
@@ -273,7 +273,7 @@ class SurfaceVariantTests(Question):
         """
         bad = []
         layouts = [
-            (f"rotated/{p}/{s}/{e}", _rotated_layout(3, p, s, e))
+            (f"rotated/{p}/{s}/{e}", _rotated_layout(3, 3, p, s, e))
             for p, s, e in _rotated_combos()
         ]
         layouts += [
@@ -299,10 +299,12 @@ class SurfaceVariantTests(Question):
         qubit / detector / observable counts match it at d=3.
         """
         bad = []
-        rref = _counts(rotated_surface_code(3, 3, 0.0))
+        rref = _counts(rotated_surface_code(3, 3, 3, 0.0))
         for pat, st, ed in _rotated_combos():
             if (
-                _counts(rotated_surface_code(3, 3, 0.0, pattern=pat, start=st, edge=ed))
+                _counts(
+                    rotated_surface_code(3, 3, 3, 0.0, pattern=pat, start=st, edge=ed)
+                )
                 != rref
             ):
                 bad.append(f"rotated/{pat}/{st}/{ed}")
@@ -322,7 +324,7 @@ class SurfaceVariantTests(Question):
         is far below the trivial always-zero predictor -- code distance is preserved.
         """
         for pat, st, ed in _rotated_combos():
-            c = rotated_surface_code(3, 3, 0.05, pattern=pat, start=st, edge=ed)
+            c = rotated_surface_code(3, 3, 3, 0.05, pattern=pat, start=st, edge=ed)
             dets, obs = DetectorSampler(c).sample(2500, seed=7)
             ler = 1.0 - logical_fidelity(
                 make_circuit_decoder("mld", c).decode_batch(dets), obs
@@ -337,12 +339,13 @@ class SurfaceVariantTests(Question):
 
     def test_colouring_equivalent_under_depolarizing(self):
         """
-        EVEN-Z (start=Z) and EVEN-X (start=X) are equivalent under symmetric
-        (depolarizing) noise -- their logical error rates agree within sampling.
+        The Z and X colourings at 2x2 (both dims even, so the colourings are
+        genuinely distinct mats) are equivalent under symmetric (depolarizing)
+        noise -- their logical error rates agree within sampling.
         """
         out = {}
         for st in ("Z", "X"):
-            c = rotated_surface_code(3, 3, 0.06, start=st)
+            c = rotated_surface_code(2, 2, 3, 0.06, start=st)
             dets, obs = DetectorSampler(c).sample(6000, seed=2)
             out[st] = 1.0 - logical_fidelity(
                 make_circuit_decoder("mld", c).decode_batch(dets), obs
@@ -354,16 +357,36 @@ class SurfaceVariantTests(Question):
             msg=f"depol Z {out['Z']:.3f} vs X {out['X']:.3f}",
         )
 
-    def test_colouring_splits_under_amplitude_damping(self):
+    def test_colouring_identical_when_symmetric(self):
         """
-        Under amplitude damping the EVEN-Z / EVEN-X colourings are NOT equivalent --
-        the report's central asymmetry (H1): the Z-memory detects the Z-coupled AD
-        errors far better than its X-dual.
+        At 3x3 the two colourings are the SAME mat (a grid rotation maps one onto
+        the other -- mat count 1), so their layouts are exactly isomorphic and
+        their LERs match under ANY noise, including amplitude damping.
         """
         out = {}
         for st in ("Z", "X"):
-            c = rotated_surface_code(3, 2, 0.12, channel="AMPLITUDE_DAMP", start=st)
+            c = rotated_surface_code(3, 3, 2, 0.12, channel="AMPLITUDE_DAMP", start=st)
             dets, obs = _quasi_sample(c, 1500, 7)
+            out[st] = 1.0 - logical_fidelity(
+                make_circuit_decoder("coherent", c).decode_batch(dets), obs
+            )
+
+        self.assertLess(
+            abs(out["Z"] - out["X"]),
+            0.05,
+            msg=f"3x3 AD Z {out['Z']:.3f} vs X {out['X']:.3f} must agree (same mat)",
+        )
+
+    def test_colouring_splits_under_amplitude_damping(self):
+        """
+        At 2x4 (both dims even: X-heavy vs Z-heavy colourings, mat count 4) the
+        colourings are NOT equivalent under amplitude damping -- the report's
+        central asymmetry: the Z-check imbalance changes AD detection.
+        """
+        out = {}
+        for st in ("Z", "X"):
+            c = rotated_surface_code(2, 4, 2, 0.12, channel="AMPLITUDE_DAMP", start=st)
+            dets, obs = _quasi_sample(c, 3000, 7)
             out[st] = 1.0 - logical_fidelity(
                 make_circuit_decoder("coherent", c).decode_batch(dets), obs
             )
@@ -371,7 +394,7 @@ class SurfaceVariantTests(Question):
         self.assertGreater(
             abs(out["Z"] - out["X"]),
             0.03,
-            msg=f"AD Z {out['Z']:.3f} vs X {out['X']:.3f} must split",
+            msg=f"2x4 AD Z {out['Z']:.3f} vs X {out['X']:.3f} must split",
         )
 
     def test_unknown_knob_rejected(self):
@@ -379,10 +402,10 @@ class SurfaceVariantTests(Question):
         An unknown pattern / start / edge raises ValueError naming the supported set.
         """
         with self.assertRaises(ValueError):
-            rotated_surface_code(3, 3, 0.0, pattern="bogus")
+            rotated_surface_code(3, 3, 3, 0.0, pattern="bogus")
 
         with self.assertRaises(ValueError):
-            rotated_surface_code(3, 3, 0.0, start="Y")
+            rotated_surface_code(3, 3, 3, 0.0, start="Y")
 
 
 if __name__ == "__main__":

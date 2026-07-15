@@ -1,21 +1,22 @@
 <script lang="ts">
-  // Section 5 island -- greedy pairwise contraction of the live code. Scrub the
-  // merge order: each step joins two tensors over their shared legs; the running
+  // Greedy pairwise contraction, scrubbable. Opens on the page's running
+  // example (3 data qubits, p = 0.1, syndrome (1, 0)) so the final per-class
+  // weights are the prose's by-hand pair [0.009, 0.081]. Scrub the merge
+  // order: each step joins two tensors over their shared legs; the running
   // "tensors left" and "largest intermediate" track the cost, and the final
-  // tensor is the per-class weight whose argmax is the correction. Flip detector
-  // buttons to re-pin the syndrome. Self-contained: owns its own distance / p /
-  // syndrome / scrub state (was coupled to the factor-graph figure in the old
-  // page component), all derived -- no $effect writes back into shared state.
+  // tensor is the per-class weight whose argmax is the correction. Flip check
+  // buttons to re-pin the syndrome. Self-contained: owns its own distance / p
+  // / syndrome / scrub state, all derived -- no $effect writes back.
   import TnSlider from "./TnSlider.svelte";
   import TnScrubber from "./TnScrubber.svelte";
   import { C } from "$lib/colors";
   import { repetitionDem, buildFactorGraph, decode, minWeightPick, type Dem } from "./decoder";
 
-  let dataQubits = $state(4); // distance of the live code
-  let p = $state(0.15); // physical error probability
+  let dataQubits = $state(3); // the running example's code
+  let p = $state(0.1); // physical error probability
   const demLive: Dem = $derived(repetitionDem(dataQubits, p));
   const fgLive = $derived(buildFactorGraph(demLive));
-  let synLive = $state<number[]>([1, 0, 0]);
+  let synLive = $state<number[]>([1, 0]); // the measured shot s = 10
 
   // length-fit the syndrome to the current distance with a pure derived (no effect).
   const synFitted = $derived.by(() => {
@@ -91,7 +92,7 @@
 <div class="ctrl-row">
   {#each detIndices as d (d)}
     <button class="syn-btn" class:lit={synFitted[d] === 1} onclick={() => setSynLive(d)}
-      >flip det {d}</button
+      >flip check {d}</button
     >
   {/each}
   <span class="mono syn-read">syndrome = ({synFitted.join(", ")})</span>
@@ -117,7 +118,7 @@
         sum over {stepInfo.sharedLegs.length} leg{stepInfo.sharedLegs.length === 1 ? "" : "s"} →
         rank {stepInfo.resultRank}
       {:else}
-        -- (start)
+        (start)
       {/if}
     </div>
   </div>
@@ -151,16 +152,16 @@
       <b style="color:{bitsToClass(decoded.prediction) === 0 ? C.ok : C.accent3}"
         >{classLabel(bitsToClass(decoded.prediction))}</b
       >
-      · naïve min-weight:
+      · naive min-weight:
       <b style="color:{mwLive.logical === 0 ? C.ok : C.accent3}"
         >{mwLive.logical === null ? "--" : classLabel(mwLive.logical)}</b
       >
       {#if liveDisagree}
-        <span class="disagree">-- they disagree, and the TN answer is the optimal one.</span>
+        <span class="disagree">(they disagree; the TN answer is the optimal one)</span>
       {:else}
         <span class="agree"
-          >-- they agree on this 1-D chain; the TN weight is still the exact summed likelihood of
-          each class.</span
+          >(they agree on this 1-D chain; the TN weight is still the exact summed likelihood of
+          each class)</span
         >
       {/if}
     </div>

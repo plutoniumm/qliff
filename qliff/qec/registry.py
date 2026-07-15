@@ -93,6 +93,29 @@ def _variant(fn: Callable[..., Circuit]) -> Callable[..., Circuit]:
     return build
 
 
+def _rotated_variant(fn: Callable[..., Circuit]) -> Callable[..., Circuit]:
+    """
+    Adapt rotated_surface_code (rows, cols, ...) to the uniform single-`distance`
+    builder signature -- the server/Studio still offer one distance slider (a square
+    rows=cols patch); rectangular (rows != cols) patches are only reachable by
+    calling qec.codes.rotated_surface_code directly.
+    """
+
+    def build(distance, rounds, p, channel, pattern, start, edge):
+        return fn(
+            distance,
+            distance,
+            rounds,
+            p,
+            channel=channel,
+            pattern=pattern,
+            start=start,
+            edge=edge,
+        )
+
+    return build
+
+
 def _color(family: str) -> Callable[..., Circuit]:
     """
     Adapt qec.color.color_code for one triangular-axis family (surface knobs unused).
@@ -119,7 +142,7 @@ FAMILIES: dict[str, CodeFamily] = {
         name="rotated_surface",
         label="Rotated surface code",
         min_distance=2,
-        builder=_variant(rotated_surface_code),
+        builder=_rotated_variant(rotated_surface_code),
         num_data=lambda d: d * d,
         default_decoders=PAULI_DECODERS,
         variant_axes={

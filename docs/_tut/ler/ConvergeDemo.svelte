@@ -1,6 +1,6 @@
 <script lang="ts">
   // Self-contained Monte-Carlo convergence figure: owns the p/d/N/seed sliders,
-  // the derived exact LER + seeded estimate + running trace, and the stat strip.
+  // the derived LER + seeded estimate + running trace, and the stat strip.
   // All curves are $derived so no $effect ever writes the state it reads.
   import Slider from "$lib/Slider.svelte";
   import { C } from "$lib/colors";
@@ -23,7 +23,14 @@
 </script>
 
 <div class="prose-controls">
-  <Slider bind:value={mcP} min={0.01} max={0.3} step={0.005} label="physical error p" format={(v) => v.toFixed(3)} />
+  <Slider
+    bind:value={mcP}
+    min={0.01}
+    max={0.3}
+    step={0.005}
+    label="physical error p"
+    format={(v) => v.toFixed(3)}
+  />
   <Slider bind:value={mcD} min={3} max={11} step={2} label="code distance d" />
   <Slider bind:value={mcN} min={50} max={20000} step={50} label="shots N" />
   <Slider bind:value={mcSeed} min={1} max={40} step={1} label="seed" />
