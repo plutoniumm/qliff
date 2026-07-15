@@ -32,3 +32,9 @@ wheelhouse/
 # local experiment output (LER/AD sweeps) + its scratch tooling
 sweeps/
 adcheck.sh
+
+# local talk assets (slides.tex is already ignored via *.tex)
+/figs/
+
+# vite config-loader temp files left behind by interrupted builds
+*.timestamp-*.mjs
