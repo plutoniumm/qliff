@@ -1,0 +1,1 @@
+import{_ as e,o as s,c as d,a2 as r}from"./chunks/framework.DPJSKfgD.js";const h=JSON.parse('{"title":"QEC","description":"","frontmatter":{},"headers":[],"relativePath":"tests/qec.md","filePath":"tests/qec.md"}'),o={name:"tests/qec.md"};function a(n,t,c,i,_,l){return s(),d("div",null,[...t[0]||(t[0]=[r("",4)])])}const b=e(o,[["render",a]]);export{h as __pageData,b as default};

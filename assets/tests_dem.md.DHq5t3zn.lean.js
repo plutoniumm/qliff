@@ -1,0 +1,1 @@
+import{_ as e,o as d,c as r,a2 as a}from"./chunks/framework.DPJSKfgD.js";const m=JSON.parse('{"title":"DEM","description":"","frontmatter":{},"headers":[],"relativePath":"tests/dem.md","filePath":"tests/dem.md"}'),s={name:"tests/dem.md"};function o(i,t,c,n,_,l){return d(),r("div",null,[...t[0]||(t[0]=[a("",4)])])}const h=e(s,[["render",o]]);export{m as __pageData,h as default};
