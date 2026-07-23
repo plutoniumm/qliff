@@ -13,9 +13,15 @@ from qliff.qec.codes import (
     logical_fidelity,
     repetition_code,
     rotated_surface_code,
+    toric_code,
     unrotated_surface_code,
 )
-from qliff.qec.decoder import make_decoder
+from qliff.qec.decoder import (
+    DECODER_SPECS,
+    make_circuit_decoder,
+    make_decoder,
+)
+from qliff.qec.threshold import _build_decoder, logical_error_rate, sweep
 from qliff.qec.tn import MaxLikelihoodDecoder, Tensor, biased_copy, contract, parity
 
 
@@ -174,9 +180,10 @@ class MldTests(Question):
 
         self.assertLess(mld, mwpm, msg=f"MLD {mld:.4f} not better than MWPM {mwpm:.4f}")
 
-    def test_tn_alias(self):
+    def test_tn_untruncated_matches_mld(self):
         """
-        The "tn" decoder name resolves to the same maximum-likelihood contraction.
+        The "tn" decoder with no bond cap resolves to the same maximum-likelihood
+        contraction as "mld", so the default behaviour of both names is identical.
         """
         dem = DetectorErrorModel(repetition_code(3, 1, 0.1))
         dets, obs = DetectorSampler(repetition_code(3, 1, 0.1)).sample(200, seed=1)
@@ -233,6 +240,171 @@ class MldTests(Question):
         self.assertEqual(preds.shape, (6, dem.num_observables), msg="d=5 must decode")
 
 
+class BondCapTests(Question):
+    """
+    The `max_bond` (chi) knob's route from the public API down to the contraction:
+    logical_error_rate / sweep -> threshold._build_decoder -> decoder.make -> the
+    tensor-network decoder's `max_bond`. Only the `bonded` decoders take it; the rest
+    raise rather than silently drop a truncation request.
+    """
+
+    def test_only_the_tn_decoders_are_bonded(self):
+        """
+        Exactly the tensor-network decoders ("tn", "coherent") advertise `bonded` in
+        the registry -- "mld" stays the exact reference and matching / BP+OSD / color
+        have no contraction to cap.
+        """
+        bonded = {name for name, spec in DECODER_SPECS.items() if spec.bonded}
+
+        self.assertEqual(
+            bonded, {"tn", "coherent"}, msg=f"bonded decoders are {sorted(bonded)}"
+        )
+
+    def test_make_decoder_threads_max_bond(self):
+        """
+        make_decoder("tn", dem, max_bond=chi) reaches the decoder's `max_bond`, and
+        omitting it leaves the exact (None) contraction.
+        """
+        dem = DetectorErrorModel(rotated_surface_code(3, 3, 3, 0.06))
+
+        self.assertEqual(
+            make_decoder("tn", dem, max_bond=8).max_bond, 8, msg="chi must reach 'tn'"
+        )
+
+        self.assertIsNone(
+            make_decoder("tn", dem).max_bond, msg="no chi must stay exact"
+        )
+
+    def test_circuit_factory_threads_max_bond(self):
+        """
+        make_circuit_decoder -- the route threshold and the server take -- carries
+        max_bond down to the tensor-network decoder it builds.
+        """
+        circuit = rotated_surface_code(3, 3, 3, 0.06)
+
+        self.assertEqual(
+            make_circuit_decoder("tn", circuit, 8).max_bond,
+            8,
+            msg="circuit factory must thread chi",
+        )
+
+        self.assertEqual(
+            _build_decoder(circuit, "tn", 8).max_bond,
+            8,
+            msg="threshold._build_decoder must thread chi",
+        )
+
+    def test_unbonded_decoders_reject_max_bond(self):
+        """
+        Asking a decoder with no contraction to truncate ("mwpm", "bposd", "mld",
+        "color") for a bond cap raises a ValueError naming it, so a truncation
+        request is never silently ignored.
+        """
+        dem = DetectorErrorModel(rotated_surface_code(3, 3, 3, 0.06))
+
+        for name in ("mwpm", "bposd", "mld", "color"):
+            with self.assertRaises(ValueError) as ctx:
+                make_decoder(name, dem, max_bond=8)
+
+            self.assertIn(
+                repr(name), str(ctx.exception), msg=f"{name} error must name it"
+            )
+
+    def test_rejects_a_non_positive_bond(self):
+        """
+        A cap below 1 keeps no singular value and would decode every syndrome to zero,
+        so it is rejected up front rather than silently returning that.
+        """
+        dem = DetectorErrorModel(rotated_surface_code(3, 3, 3, 0.06))
+
+        with self.assertRaises(ValueError) as ctx:
+            make_decoder("tn", dem, max_bond=0)
+
+        self.assertIn(">= 1", str(ctx.exception), msg="error must state the bound")
+
+    def test_logical_error_rate_rejects_max_bond_on_mwpm(self):
+        """
+        The rejection survives the whole logical_error_rate call chain rather than
+        being dropped somewhere in threshold's decoder construction.
+        """
+        circuit = rotated_surface_code(3, 3, 3, 0.06)
+
+        with self.assertRaises(ValueError) as ctx:
+            logical_error_rate(circuit, "mwpm", 100, 1, max_bond=8)
+
+        self.assertIn("max_bond", str(ctx.exception), msg="error must name the knob")
+
+    def test_logical_error_rate_exact_at_large_chi(self):
+        """
+        Run end to end, a bond cap wide enough to cover every cut gives exactly the
+        exact decoder's logical error rate -- the knob is lossless at large chi.
+        """
+        circuit = rotated_surface_code(3, 3, 3, 0.06)
+        exact = logical_error_rate(circuit, "mld", 400, 9)
+        capped = logical_error_rate(circuit, "tn", 400, 9, max_bond=16)
+
+        self.assertEqual(capped, exact, msg=f"chi=16 {capped} != exact {exact}")
+
+    def test_tight_chi_changes_the_decoding(self):
+        """
+        A chi=1 cap really truncates the contraction: it disagrees with the exact
+        decoder on some shots, proving the option reaches the contraction and is
+        not quietly discarded on the way down.
+        """
+        circuit = rotated_surface_code(3, 3, 3, 0.07)
+        dem = DetectorErrorModel(circuit)
+        dets, _obs = DetectorSampler(circuit).sample(300, seed=4)
+        exact = make_decoder("mld", dem).decode_batch(dets)
+        cut = make_decoder("tn", dem, max_bond=1).decode_batch(dets)
+        differing = int(np.sum(np.any(exact != cut, axis=1)))
+
+        self.assertGreater(differing, 0, msg="chi=1 must change some predictions")
+
+    def test_tight_chi_agrees_on_toric_at_wide_chi(self):
+        """
+        On a toric memory -- a denser network where truncation bites at chi=2 -- a
+        tight cap changes the class weights while a wide one restores them to the
+        exact contraction, bracketing the knob from both sides.
+        """
+        circuit = toric_code(3, 2, 0.06)
+        dem = DetectorErrorModel(circuit)
+        dets, _obs = DetectorSampler(circuit).sample(40, seed=6)
+        decoder = MaxLikelihoodDecoder(dem)
+        # a syndrome the model can actually produce, so the class weights are nonzero.
+        syndrome = max(dets, key=lambda row: int(row.sum()))
+        tensors = decoder._static + decoder._detector_tensors(syndrome)
+        exact = contract(tensors, decoder._open).data.reshape(-1)
+        tight = contract(tensors, decoder._open, max_bond=1).data.reshape(-1)
+        wide = contract(tensors, decoder._open, max_bond=64).data.reshape(-1)
+        norm = np.linalg.norm(exact)
+
+        self.assertGreater(
+            np.linalg.norm(exact - tight) / norm, 1e-3, msg="chi=1 must truncate"
+        )
+
+        self.assertLess(
+            np.linalg.norm(exact - wide) / norm, 1e-9, msg="chi=64 must be exact"
+        )
+
+    def test_sweep_threads_max_bond(self):
+        """
+        sweep / isweep forward max_bond to every point of the curve, so a threshold
+        sweep can run the truncating decoder.
+        """
+        curve = sweep(
+            lambda p: rotated_surface_code(3, 3, 2, p),
+            [0.02, 0.05],
+            "tn",
+            200,
+            3,
+            max_bond=8,
+        )
+
+        self.assertEqual(len(curve), 2, msg="sweep must yield one point per p")
+
+        self.assertLess(curve[0][1], curve[1][1] + 0.05, msg="LER must track p")
+
+
 if __name__ == "__main__":
     rc = 0
     rc |= Exam("TN", "Tensor-network contraction primitives", "tn.md").run(
@@ -241,4 +413,7 @@ if __name__ == "__main__":
     rc |= Exam("MLD", "Maximum-likelihood (tensor) decoder", "mld.md").run(
         load(MldTests)
     )
+    rc |= Exam(
+        "BondCap", "Bond-dimension (chi) plumbing from the public API", "bond_cap.md"
+    ).run(load(BondCapTests))
     sys.exit(rc)

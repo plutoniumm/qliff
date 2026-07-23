@@ -3,9 +3,7 @@ title: Minimum-Weight Perfect Matching
 outline: 2
 ---
 
-# Minimum-Weight Perfect Matching (MWPM) <Badge type="info" text="Tutorial 02 of 7" />
-
-> Turn a syndrome into a graph, then pair up the defects as cheaply as possible.
+# Minimum-Weight Perfect Matching (MWPM) <Badge type="info" text="Tutorial 02 of 10" />
 
 <script setup>
 import Fig1Problem from '../_tut/mwpm/Fig1Problem.svelte'
@@ -36,9 +34,7 @@ That lit check is a **detection event**, or *defect*.
 
 <SvelteIsland :component="Fig1Problem" />
 
-*Click data qubits to flip them. A check fires iff its two neighbours disagree.*
-
-*Legend: data qubit; X error (flipped qubit); Z-check (quiet); lit check (defect); boundary node (L / R).*
+*Legend: data qubit; X error = flipped qubit; Z-check = quiet; lit check = defect; L / R = boundary node.*
 
 ::: tip A whole chain lights only its endpoints
 Try *make a chain*: three adjacent errors, yet only two checks fire.
@@ -62,9 +58,7 @@ differ by flipping the whole register: the code's logical operator.
 
 <SvelteIsland :component="Fig2Pairs" />
 
-*Both patterns light the same defects (gaps 2 and 6). Which one happened? The syndrome can't tell us.*
-
-*Legend: X error (flipped qubit); lit check (defect); untouched qubit.*
+*Legend: X error = flipped qubit; lit check = defect; untouched qubit.*
 
 All consistent, all different. To *decode* we must commit to one. The
 guiding principle: pick the **most likely** error. Under
@@ -91,9 +85,7 @@ fault lighting a single detector connects it to the boundary). MWPM works
 
 <SvelteIsland :component="Fig3Graph" />
 
-*Dashed grey = every candidate edge of the matching graph (defect$\leftrightarrow$defect and defect$\leftrightarrow$boundary). Hover to inspect a chain.*
-
-*Legend: defect node; boundary node (L / R); candidate edge; hovered edge.*
+*Legend: defect node; L / R = boundary node; candidate edge; hovered edge.*
 
 ::: info Boundary node = 'L' / 'R'
 A defect near an end is often cheapest to cancel by running a short chain
@@ -134,8 +126,6 @@ Slide $p$ and watch the weight move:
 **Edge weight w(p)**
 
 <SvelteIsland :component="Fig4Weights" />
-
-*Lower physical error rate -> higher weight per chain step -> the matcher favours short chains more strongly.*
 
 *Legend: w = log((1-p)/p); defect node; candidate edge.*
 
@@ -179,9 +169,7 @@ per-step weight.
 
 <SvelteIsland :component="Fig5Match" />
 
-*Click defects / boundary boxes to build your own matching. Cyan arcs = your pairs.*
-
-*Legend: defect to pair; boundary node (L / R); your pairing; optimum correction.*
+*Legend: defect node; L / R = boundary node; your pairing; optimum correction.*
 
 ## From matching to correction: did the qubit survive?
 
@@ -207,9 +195,7 @@ logical bit is silently flipped: a logical error.
 
 <SvelteIsland :component="Fig6Correction" />
 
-*Green band = MWPM's correction. Compare it with the true error to read the residual.*
-
-*Legend: true X error; lit check (defect); matched pairing; MWPM correction chain.*
+*Legend: true X error; lit check = defect; matched pairing; MWPM correction chain.*
 
 ::: warning The decoder isn't wrong, only unlucky
 With the past-midpoint chain, the *shorter* way to cancel the defects
@@ -240,8 +226,6 @@ and checks the residual, over thousands of shots.
 
 <SvelteIsland :component="Fig7Ler" />
 
-*Live logical error rate of the MWPM-decoded repetition code. Raise the distance and watch reliability improve while p stays fixed.*
-
 *Legend: LER sweep (4k-2.5k shots); sampled p point; current p marker; decade gridline.*
 
 ::: tip When two matchings tie, it's a coin flip
@@ -254,8 +238,6 @@ $d$ moves that tie further out of reach.
 **Search replay**
 
 <SvelteIsland :component="Fig7Replay" />
-
-*Optional: step through the brute-force search revealing the optimal pairs one at a time on the graph from step 3/4.*
 
 *Legend: candidate edge; chosen optimal pair; correction (final frame).*
 

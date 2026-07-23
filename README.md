@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/plutoniumm/qliff/main/icon.png" align="right" width="96" alt="qliff" />
+
 # qliff
 
 A Clifford stabilizer simulator with support for noisy and mid-circuit measurement-based simulation.

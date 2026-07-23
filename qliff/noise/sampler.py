@@ -40,6 +40,41 @@ def _compile_branches(
     return table
 
 
+def compile_signed(circuit: Circuit) -> tuple[list, list] | None:
+    """
+    Lower `circuit` to the Rust SIGNED batched sampler (ColTableau.sample_batch_
+    signed): a flat (kind, x, y, z) instr stream plus per-noise-op signed branch
+    tables, with reset lowered to opcode 9. Unlike Sampler._compile this KEEPS
+    non-Pauli channels -- their signed branch weights drive the per-shot importance
+    weight -- so it is the fast path for the WeightedDetectorSampler. Returns
+    (instrs, tables), or None when a branch op has no core opcode (an exotic custom
+    channel), which sends the caller to the Python trajectory loop.
+    """
+    instrs = []
+    tables = []
+
+    for name, targets, arg in circuit.instructions:
+        if name in GATES_1 or name in GATES_2:
+            instrs.extend((0, op, a, b) for op, a, b in _lower_gates(name, targets))
+        elif name == "M":
+            instrs.extend((1, 0, q, 0) for q in targets)
+        elif name == "MR":
+            instrs.extend((1, 1, q, 0) for q in targets)
+        elif name == "R":
+            instrs.extend((1, 2, q, 0) for q in targets)
+        else:
+            table = _compile_branches(
+                make_channel(name, arg).branches(targets), reset_opcode=9
+            )
+            if table is None:
+                return None
+
+            instrs.append((2, len(tables), 0, 0))
+            tables.append(table)
+
+    return instrs, tables
+
+
 def _poisson_binomial(phis: list[float]) -> list[float]:
     probs = [1.0]
     for phi in phis:
@@ -52,6 +87,107 @@ def _poisson_binomial(phis: list[float]) -> list[float]:
         probs = nxt
 
     return probs
+
+
+def stratum_masses(locs: list) -> list[float]:
+    """
+    Exact SIGNED quasiprobability mass of each fault-count stratum: mass[k] is the
+    coefficient of x^k in prod_i (a_i + b_i x), where a_i is location i's identity
+    branch weight and b_i its summed fault weight. These are the true weights of the
+    decomposition, NOT the |.|/gamma sampling probabilities, so they can be negative
+    and they sum to 1 by trace preservation. Knowing them analytically is what lets
+    the stratified estimator normalise each stratum away (see the self-normalised
+    ratio in qec/sampler.StratifiedDetectorSampler).
+    """
+    poly = [1.0]
+    for branches, _gamma in locs:
+        a = branches[0][0]
+        b = sum(w for w, _ops in branches[1:])
+        nxt = [0.0] * (len(poly) + 1)
+
+        for k, c in enumerate(poly):
+            nxt[k] += c * a
+            nxt[k + 1] += c * b
+
+        poly = nxt
+
+    return poly
+
+
+def build_strata(instructions: list) -> tuple[list, list[float], list[float], list]:
+    """
+    Per-location branch data for stratified sampling: (locs, phis, pk, mass). `locs`
+    is [(branches, gamma)] over the circuit's noise locations, `phis[i]` the
+    probability location i faults under the |.|/gamma sampling measure, `pk` the
+    exact Poisson-binomial P(k faults) of that measure, and `mass` the exact signed
+    quasiprobability mass per stratum (see stratum_masses).
+    """
+    locs = []
+    phis = []
+
+    for name, targets, arg in instructions:
+        if name in CLIFFORD_OPS:
+            continue
+        branches = make_channel(name, arg).branches(targets)
+        gamma = sum(abs(w) for w, _ in branches)
+        gfault = sum(abs(w) for w, _ in branches[1:])
+        locs.append((branches, gamma))
+        phis.append(gfault / gamma if gamma > 0.0 else 0.0)
+
+    return locs, phis, _poisson_binomial(phis), stratum_masses(locs)
+
+
+def fault_set(phis: list[float], k: int, rng: random.Random) -> set[int]:
+    """
+    Sample exactly k faulty locations from the Poisson-binomial of `phis`.
+    suffix[i][j] = prob locations i.. yield j faults (DP, built backwards); then walk
+    forward, including i with its conditional prob given the faults still needed.
+    """
+    a = len(phis)
+    suffix = [[0.0] * (a + 1) for _ in range(a + 1)]
+    suffix[a][0] = 1.0
+    for i in range(a - 1, -1, -1):
+        for j in range(a - i + 1):
+            ways = (1.0 - phis[i]) * suffix[i + 1][j]
+            if j >= 1:
+                ways += phis[i] * suffix[i + 1][j - 1]
+            suffix[i][j] = ways
+
+    chosen = set()
+    need = k
+    for i in range(a):
+        if need == 0:
+            break
+        denom = suffix[i][need]
+        if denom <= 0.0:
+            continue
+        if rng.random() < phis[i] * suffix[i + 1][need - 1] / denom:
+            chosen.add(i)
+            need -= 1
+
+    return chosen
+
+
+def pick_branch(branches: list[Branch], rng: random.Random) -> int:
+    """
+    Draw one FAULT branch index (never the identity) with probability |w| / sum|w|.
+    """
+    # fmt: off
+    faults = [
+        (i + 1, w, ops)
+            for i, (w, ops) in enumerate(branches[1:])
+            if w != 0.0
+    ]
+    # fmt: on
+    threshold = rng.random() * sum(abs(w) for _, w, _ in faults)
+
+    acc = 0.0
+    for bidx, w, _ops in faults:
+        acc += abs(w)
+        if threshold <= acc:
+            return bidx
+
+    return faults[-1][0]
 
 
 class Sampler:
@@ -219,65 +355,15 @@ class Sampler:
     def _build_strata(self) -> tuple[list, list[float], list[float]]:
         # lazily compute per-location branch data + Poisson-binomial P(k) for
         # stratified estimation; only paid when stratify=True.
-        locs = []
-        phis = []
+        locs, phis, pk, _mass = build_strata(self.circuit.instructions)
 
-        for name, targets, arg in self.circuit.instructions:
-            if name in CLIFFORD_OPS:
-                continue
-            branches = make_channel(name, arg).branches(targets)
-            gamma = sum(abs(w) for w, _ in branches)
-            gfault = sum(abs(w) for w, _ in branches[1:])
-            locs.append((branches, gamma))
-            phis.append(gfault / gamma if gamma > 0.0 else 0.0)
-
-        return locs, phis, _poisson_binomial(phis)
+        return locs, phis, pk
 
     def _fault_set(self, phis: list[float], k: int, rng: random.Random) -> set[int]:
-        # sample exactly k faulty locations from the Poisson-binomial.
-        # suffix[i][j] = prob locations i.. yield j faults (DP, built backwards);
-        # then walk forward, including i with its conditional prob given faults left.
-        a = len(phis)
-        suffix = [[0.0] * (a + 1) for _ in range(a + 1)]
-        suffix[a][0] = 1.0
-        for i in range(a - 1, -1, -1):
-            for j in range(a - i + 1):
-                ways = (1.0 - phis[i]) * suffix[i + 1][j]
-                if j >= 1:
-                    ways += phis[i] * suffix[i + 1][j - 1]
-                suffix[i][j] = ways
-
-        chosen = set()
-        need = k
-        for i in range(a):
-            if need == 0:
-                break
-            denom = suffix[i][need]
-            if denom <= 0.0:
-                continue
-            if rng.random() < phis[i] * suffix[i + 1][need - 1] / denom:
-                chosen.add(i)
-                need -= 1
-
-        return chosen
+        return fault_set(phis, k, rng)
 
     def _pick_branch(self, branches: list[Branch], rng: random.Random) -> int:
-        # fmt: off
-        faults = [
-            (i + 1, w, ops)
-                for i, (w, ops) in enumerate(branches[1:])
-                if w != 0.0
-        ]
-        # fmt: on
-        threshold = rng.random() * sum(abs(w) for _, w, _ in faults)
-
-        acc = 0.0
-        for bidx, w, _ops in faults:
-            acc += abs(w)
-            if threshold <= acc:
-                return bidx
-
-        return faults[-1][0]
+        return pick_branch(branches, rng)
 
     def _shot(
         self,

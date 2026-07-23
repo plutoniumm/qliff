@@ -302,31 +302,66 @@ _VECTOR_CHANNELS = {
 _TWO_QUBIT_CHANNELS = {name for name, meta in CHANNEL_META.items() if meta.two_qubit}
 
 
-def channel_arg(channel: str, p: float) -> object:
+def bias_split(p: float, eta: float) -> tuple[float, float, float]:
+    """
+    (px, py, pz) at total rate p with Z-bias eta = pz / (px + py): pz =
+    p * eta / (1 + eta) and px = py = p / (2 * (1 + eta)). eta = 0.5 reproduces
+    depolarizing (p/3 each) exactly, and eta -> infinity is pure dephasing.
+    """
+    if eta < 0.0:
+        raise ValueError(f"bias eta must be >= 0, got {eta}")
+    pz = p * eta / (1.0 + eta)
+    pxy = p / (2.0 * (1.0 + eta))
+
+    return (pxy, pxy, pz)
+
+
+def channel_arg(channel: str, p: float, bias: float | None = None) -> object:
     """
     The arg a scalar strength p becomes for `channel`: a (px, py, pz) split for
-    vector channels, else p unchanged.
+    vector channels, else p unchanged. An already-shaped (px, py, pz) passes through
+    untouched. `bias` is the Z-bias eta of that split (see bias_split), so a builder
+    can request biased Pauli noise instead of the equal-thirds depolarizing default;
+    it only applies to vector channels, and asking for it on a scalar channel is an
+    error rather than a silent no-op.
     """
     if channel in _VECTOR_CHANNELS:
-        return (p / 3.0, p / 3.0, p / 3.0)
+        if isinstance(p, (tuple, list)):
+            return tuple(p)
+
+        if bias is None:
+            return (p / 3.0, p / 3.0, p / 3.0)
+
+        return bias_split(p, bias)
+
+    if bias is not None:
+        raise ValueError(
+            f"bias only shapes vector channels {sorted(_VECTOR_CHANNELS)}, "
+            f"not {channel!r}; use PAULI_CHANNEL_1 for biased Pauli noise"
+        )
 
     return p
 
 
-def apply_data_noise(append, channel: str, qubits, p: float) -> None:
+def apply_data_noise(
+    append, channel: str, qubits, p: float, bias: float | None = None
+) -> None:
     """
     Emit per-round data noise for `channel` at strength p onto `qubits`, via the
     `append(name, targets, arg)` callback (e.g. Circuit.append). Scalar 1Q channels
-    hit every qubit; PAULI_CHANNEL_1 spreads p over (px, py, pz); DEPOLARIZE2 acts on
-    adjacent qubit pairs (the last qubit is dropped if the count is odd).
+    hit every qubit; PAULI_CHANNEL_1 spreads p over (px, py, pz), Z-biased by `bias`
+    if given; DEPOLARIZE2 acts on adjacent qubit pairs (the last qubit is dropped if
+    the count is odd).
     """
     qubits = list(qubits)
     if channel in _TWO_QUBIT_CHANNELS:
+        if bias is not None:
+            raise ValueError(f"bias does not apply to the 2-qubit channel {channel!r}")
         for i in range(0, len(qubits) - 1, 2):
             append(channel, [qubits[i], qubits[i + 1]], p)
 
         return
 
-    arg = channel_arg(channel, p)
+    arg = channel_arg(channel, p, bias)
     for q in qubits:
         append(channel, [q], arg)

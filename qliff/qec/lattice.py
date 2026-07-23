@@ -1,9 +1,36 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 from ..circuit import Circuit
 from ..noise.channel import NOISE_FACTORIES, apply_data_noise
+
+# Single-qubit deformation frames, keyed by (X-image, Z-image) of the conjugation
+# U P U+ with canonically POSITIVE signs on both images (verified numerically --
+# a sign there would flip a data readout bit and so a detector / observable
+# parity). The value is the prep sequence in circuit order; the frame is undone
+# before the transversal M by _frame_undo. The Z-image is the qubit's readout
+# basis, so ("X", "Z") is the plain |0> / Z-basis frame and ("Z", "X") is the
+# Hadamard frame the XZZX sublattice uses.
+FRAME_PREP: dict[tuple[str, str], tuple[str, ...]] = {
+    ("X", "Z"): (),
+    ("Z", "X"): ("H",),
+    ("X", "Y"): ("H", "S_DAG", "H"),
+    ("Y", "Z"): ("S",),
+    ("Z", "Y"): ("H", "S"),
+    ("Y", "X"): ("S_DAG", "H"),
+}
+PLAIN_FRAME = ("X", "Z")
+_GATE_INV = {
+    "H": "H",
+    "S": "S_DAG",
+    "S_DAG": "S",
+}
+
+
+def _frame_undo(gates: tuple[str, ...]) -> tuple[str, ...]:
+    """
+    The inverse of a prep sequence: reversed, with each gate inverted.
+    """
+    return tuple(_GATE_INV[g] for g in reversed(gates))
 
 
 def _emit_z_memory(
@@ -13,27 +40,32 @@ def _emit_z_memory(
     rounds: int,
     noise_channel: str,
     p: float,
-    x_frame: Iterable[int] = (),
+    frames: dict[int, tuple[str, str]] | None = None,
     universal_h: bool = False,
     prep: bool = False,
+    bias: float | None = None,
 ) -> Circuit:
     """
     Shared Z-memory syndrome-extraction emitter for every code family (surface,
     toric, colour, and the XZZX / EVEN-X variants). Each stabilizer is
-    (primary, ancilla, corners) with corners [(data, "X"|"Z")]; checks are emitted
-    in the GIVEN order, so callers put the primary Z-checks first to keep the round
-    detectors graphlike. Only `primary` checks declare round-to-round detectors and
-    seed the boundary detectors after the transversal M. A pure-Z check reads with a
-    bare data->ancilla CX ladder; any other check (a star, or a mixed XZZX face)
-    reads with a |+> ancilla and a per-corner CX / CZ. `universal_h` forces that
-    ancilla-Hadamard form on every check (the non-CSS variants), and `x_frame` lists
-    the data qubits initialised |+> and read back in the X basis. `prep` runs one
-    NOISELESS extraction round first (no detectors) so noise always hits a projected
-    code state -- without it the first noise layer acts on the |0>/|+> product
-    state, which is a fixed point of amplitude damping, so an AD round is wasted.
+    (primary, ancilla, corners) with corners [(data, "X"|"Y"|"Z")]; checks are
+    emitted in the GIVEN order, so callers put the primary Z-checks first to keep the
+    round detectors graphlike. Only `primary` checks declare round-to-round detectors
+    and seed the boundary detectors after the transversal M. A pure-Z check reads with
+    a bare data->ancilla CX ladder; any other check (a star, or a mixed XZZX face)
+    reads with a |+> ancilla and a per-corner CX / CY / CZ. `universal_h` forces that
+    ancilla-Hadamard form on every check (the non-CSS variants). `frames` maps a data
+    qubit to its single-qubit deformation frame (see FRAME_PREP): the qubit is
+    prepared in the +1 eigenstate of the frame's Z-image and read back in that basis,
+    so the whole circuit body is conjugated by that Clifford. `bias` reshapes vector
+    Pauli noise (see channel_arg). `prep` runs one NOISELESS extraction round first
+    (no detectors) so noise always hits a projected code state -- without it the first
+    noise layer acts on the product state, which is a fixed point of amplitude
+    damping, so an AD round is wasted.
     """
     c = Circuit()
     width = len(stabilizers)
+    frames = frames or {}
 
     def extract(anc, corners):
         if not universal_h and all(pauli == "Z" for _q, pauli in corners):
@@ -42,22 +74,28 @@ def _emit_z_memory(
         else:
             c.append("H", [anc])
             for q, pauli in corners:
-                if pauli == "X":
-                    c.append("CX", [anc, q])
-                else:
+                # CY is not a primitive: conjugate a CX by S on the target.
+                if pauli == "Y":
+                    c.append("S_DAG", [q])
+                if pauli == "Z":
                     c.append("CZ", [anc, q])
+                else:
+                    c.append("CX", [anc, q])
+                if pauli == "Y":
+                    c.append("S", [q])
             c.append("H", [anc])
         c.append("MR", [anc])
 
-    for q in x_frame:
-        c.append("H", [q])
+    for q in range(num_data):
+        for gate in FRAME_PREP[frames.get(q, PLAIN_FRAME)]:
+            c.append(gate, [q])
 
     if prep:
         for _primary, anc, corners in stabilizers:
             extract(anc, corners)
 
     for r in range(rounds):
-        apply_data_noise(c.append, noise_channel, range(num_data), p)
+        apply_data_noise(c.append, noise_channel, range(num_data), p, bias=bias)
 
         for primary, anc, corners in stabilizers:
             extract(anc, corners)
@@ -68,8 +106,9 @@ def _emit_z_memory(
             else:
                 c.detector(-1, -1 - width)
 
-    for q in x_frame:
-        c.append("H", [q])
+    for q in range(num_data):
+        for gate in _frame_undo(FRAME_PREP[frames.get(q, PLAIN_FRAME)]):
+            c.append(gate, [q])
     for q in range(num_data):
         c.append("M", [q])
 

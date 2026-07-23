@@ -134,11 +134,13 @@ class DecoderSpec:
     """
     One decoder's registry record: its wire `name`, UI `label`, capability `note`,
     whether it honestly decodes only Pauli noise (`pauli_only`), whether it REQUIRES
-    a graphlike error model (`graphlike` -- only MWPM does), its `mode` ("dem" builds
-    a DetectorErrorModel, "circuit" consumes the circuit directly), and the `factory`
-    that constructs it. Single source of truth: the server's Pauli-only / graphlike
-    capability sets and the /decoders payload all read from here, so a decoder's
-    capability flags cannot drift.
+    a graphlike error model (`graphlike` -- only MWPM does), whether it accepts a
+    bond-dimension cap (`bonded` -- only the truncating tensor-network decoders do),
+    its `mode` ("dem" builds a DetectorErrorModel, "circuit" consumes the circuit
+    directly), and the `factory` that constructs it. A `bonded` factory takes
+    (target, max_bond); every other takes (target) alone. Single source of truth: the
+    server's Pauli-only / graphlike capability sets and the /decoders payload all read
+    from here, so a decoder's capability flags cannot drift.
     """
 
     name: str
@@ -146,6 +148,7 @@ class DecoderSpec:
     note: str
     pauli_only: bool
     graphlike: bool
+    bonded: bool
     mode: str
     factory: Callable[..., Decoder]
 
@@ -164,21 +167,30 @@ def _mld_factory(dem: DetectorErrorModel) -> Decoder:
     return MaxLikelihoodDecoder(dem)
 
 
+def _tn_factory(dem: DetectorErrorModel, max_bond: int | None = None) -> Decoder:
+    from .tn import MaxLikelihoodDecoder
+
+    return MaxLikelihoodDecoder(dem, max_bond=max_bond)
+
+
 def _color_factory(dem: DetectorErrorModel) -> Decoder:
     from .colordec import ColorDecoder
 
     return ColorDecoder(dem)
 
 
-def _coherent_factory(circuit) -> Decoder:
+def _coherent_factory(circuit, max_bond: int | None = None) -> Decoder:
     from .coherent import CoherentDecoder
 
-    return CoherentDecoder(circuit)
+    return CoherentDecoder(circuit, max_bond=max_bond)
 
 
 # Every decoder the engine offers, in the exact order /decoders lists them. "mld" and
-# "tn" share the MLD factory (tn will gain bond-dim truncation); both are non-Pauli
-# capable and auto-route to the coherent TN on non-Pauli noise (see `make`).
+# "tn" are the SAME contraction but no longer aliases: "mld" is the exact reference
+# decoder and refuses a bond cap, while "tn" is `bonded` and takes `max_bond=chi` to
+# truncate the contraction ("tn" with max_bond=None, the default, is still bit-for-bit
+# "mld"). Both are non-Pauli capable and auto-route to the coherent TN on non-Pauli
+# noise (see `make`), which is `bonded` too.
 DECODER_SPECS: dict[str, DecoderSpec] = {
     "mwpm": DecoderSpec(
         name="mwpm",
@@ -186,6 +198,7 @@ DECODER_SPECS: dict[str, DecoderSpec] = {
         note="minimum-weight perfect matching (graphlike)",
         pauli_only=True,
         graphlike=True,
+        bonded=False,
         mode="dem",
         factory=_mwpm_factory,
     ),
@@ -195,33 +208,37 @@ DECODER_SPECS: dict[str, DecoderSpec] = {
         note="belief propagation + ordered-statistics decoding",
         pauli_only=True,
         graphlike=False,
+        bonded=False,
         mode="dem",
         factory=_bposd_factory,
     ),
     "mld": DecoderSpec(
         name="mld",
         label="MLD",
-        note="exact max-likelihood TN (Pauli + coherent)",
+        note="exact max-likelihood TN, no truncation (Pauli + coherent)",
         pauli_only=False,
         graphlike=False,
+        bonded=False,
         mode="dem",
         factory=_mld_factory,
     ),
     "tn": DecoderSpec(
         name="tn",
         label="TN",
-        note="tensor-network max-likelihood (Pauli + coherent)",
+        note="max-likelihood TN, bond-truncatable via max_bond (Pauli + coherent)",
         pauli_only=False,
         graphlike=False,
+        bonded=True,
         mode="dem",
-        factory=_mld_factory,
+        factory=_tn_factory,
     ),
     "coherent": DecoderSpec(
         name="coherent",
         label="Coherent",
-        note="non-Pauli/coherent TN",
+        note="non-Pauli/coherent TN, bond-truncatable via max_bond",
         pauli_only=False,
         graphlike=False,
+        bonded=True,
         mode="circuit",
         factory=_coherent_factory,
     ),
@@ -231,6 +248,7 @@ DECODER_SPECS: dict[str, DecoderSpec] = {
         note="dedicated min-weight lookup decoder; handles color-code hyperedges",
         pauli_only=True,
         graphlike=False,
+        bonded=False,
         mode="dem",
         factory=_color_factory,
     ),
@@ -243,12 +261,53 @@ def _unknown_decoder_msg(name: str) -> str:
     return f"unknown decoder {name!r}; expected one of {names}"
 
 
-def make_decoder(name: str, dem: DetectorErrorModel) -> Decoder:
+def _check_max_bond(spec: DecoderSpec, max_bond: int | None) -> None:
     """
-    Dispatch a DEM decoder by name: "mwpm" (default), "bposd", "mld"/"tn" (exact
-    maximum-likelihood by tensor contraction), or "color". "coherent" is circuit-aware,
-    not DEM-based -- request it through make_circuit_decoder, which has access to the
-    circuit's signed noise branches.
+    Validate a `max_bond` against the decoder it is aimed at, so the knob can never be
+    silently dropped: None (the exact contraction) suits every decoder, a cap below 1
+    keeps no singular value at all and would decode every syndrome to zero, and a real
+    cap reaches only the `bonded` decoders.
+    """
+    if max_bond is None:
+        return
+
+    if max_bond < 1:
+        raise ValueError(
+            f"max_bond must be a bond dimension >= 1, got {max_bond!r}; pass None "
+            "for the exact contraction"
+        )
+
+    if spec.bonded:
+        return
+
+    names = ", ".join(f"'{n}'" for n, s in DECODER_SPECS.items() if s.bonded)
+    raise ValueError(
+        f"decoder {spec.name!r} has no tensor contraction to truncate, so it cannot "
+        f"honour max_bond={max_bond!r}; drop it or use one of {names}"
+    )
+
+
+def _build(spec: DecoderSpec, target, max_bond: int | None) -> Decoder:
+    """
+    Call a spec's factory over its build target (a DEM, or the circuit for
+    "circuit"-mode decoders), threading `max_bond` into the `bonded` factories only.
+    """
+    if spec.bonded:
+        return spec.factory(target, max_bond)
+
+    return spec.factory(target)
+
+
+def make_decoder(
+    name: str, dem: DetectorErrorModel, max_bond: int | None = None
+) -> Decoder:
+    """
+    Dispatch a DEM decoder by name: "mwpm" (default), "bposd", "mld" (exact
+    maximum-likelihood by tensor contraction), "tn" (that same contraction, capped at
+    `max_bond` bond dimension), or "color". `max_bond` is honoured only by the `bonded`
+    decoders and raises on any other, so a truncation request is never silently
+    dropped. "coherent" is circuit-aware, not DEM-based -- request it through
+    make_circuit_decoder, which has access to the circuit's signed noise branches.
     """
     spec = DECODER_SPECS.get(name.lower())
     if spec is None:
@@ -260,7 +319,9 @@ def make_decoder(name: str, dem: DetectorErrorModel) -> Decoder:
             "build it via make_circuit_decoder(name, circuit)"
         )
 
-    return spec.factory(dem)
+    _check_max_bond(spec, max_bond)
+
+    return _build(spec, dem, max_bond)
 
 
 def _circuit_is_pauli(circuit) -> bool:
@@ -282,7 +343,7 @@ def _circuit_is_pauli(circuit) -> bool:
     return True
 
 
-def make(name: str, circuit) -> Decoder:
+def make(name: str, circuit, max_bond: int | None = None) -> Decoder:
     """
     The single circuit-aware decoder entry point: build decoder `name` for `circuit`,
     reading its DecoderSpec.mode. "circuit"-mode decoders ("coherent") consume the
@@ -291,24 +352,29 @@ def make(name: str, circuit) -> Decoder:
     signed-quasiprobability TN (CoherentDecoder, which reduces to exact MLD on Pauli
     noise) when the circuit carries non-Pauli noise no DEM can hold. The graphlike DEM
     decoders ("mwpm", "bposd") and "color" stay pauli_only, so they take the DEM path,
-    where DetectorErrorModel raises on non-Pauli noise.
+    where DetectorErrorModel raises on non-Pauli noise. `max_bond` caps the tensor
+    contraction's bond dimension; only the `bonded` decoders ("tn", "coherent") take
+    it -- including down the non-Pauli fallback, so "tn" truncates in both noise
+    regimes -- and every other decoder raises on it.
     """
     spec = DECODER_SPECS.get(name.lower())
     if spec is None:
         raise ValueError(_unknown_decoder_msg(name))
 
+    _check_max_bond(spec, max_bond)
+
     if spec.mode == "circuit":
-        return spec.factory(circuit)
+        return _build(spec, circuit, max_bond)
 
     if not spec.pauli_only and not _circuit_is_pauli(circuit):
-        return _coherent_factory(circuit)
+        return _coherent_factory(circuit, max_bond)
 
-    return spec.factory(DetectorErrorModel(circuit))
+    return _build(spec, DetectorErrorModel(circuit), max_bond)
 
 
-def make_circuit_decoder(name: str, circuit) -> Decoder:
+def make_circuit_decoder(name: str, circuit, max_bond: int | None = None) -> Decoder:
     """
     Circuit-aware decoder factory shared by the threshold / server code. Thin alias
     for `make`, kept for callers importing the historical name.
     """
-    return make(name, circuit)
+    return make(name, circuit, max_bond)

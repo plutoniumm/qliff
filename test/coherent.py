@@ -310,6 +310,57 @@ class CoherentTests(Question):
             mismatches, 0, msg="'tn'/'mld' must decode non-Pauli noise via coherent"
         )
 
+    def test_max_bond_reaches_the_non_pauli_fallback(self):
+        """
+        A bond cap survives the non-Pauli auto-fallback: "tn" on a coherent-RX
+        circuit builds a CoherentDecoder that carries the requested max_bond, so the
+        knob works in both noise regimes and not just on the DEM path.
+        """
+        circuit = _rep_coherent(3, "RX", 0.45)
+        fallback = make_circuit_decoder("tn", circuit, 4)
+        direct = make_circuit_decoder("coherent", circuit, 4)
+
+        self.assertEqual(fallback.max_bond, 4, msg="fallback must carry chi")
+
+        self.assertEqual(direct.max_bond, 4, msg="'coherent' must carry chi")
+
+        self.assertIsNone(
+            make_circuit_decoder("coherent", circuit).max_bond,
+            msg="no chi must stay exact",
+        )
+
+    def test_capped_coherent_matches_exact_at_wide_chi(self):
+        """
+        At a bond cap wide enough to cover every cut the quasiprobability decoder
+        reproduces the exact coherent contraction on every syndrome, so truncation
+        is lossless at large chi for the signed-weight network too.
+        """
+        circuit = _rep_coherent(3, "RX", 0.45)
+        exact = make_circuit_decoder("coherent", circuit)
+        capped = make_circuit_decoder("coherent", circuit, 32)
+        mismatches = 0
+
+        for s in itertools.product((0, 1), repeat=exact.num_detectors):
+            syndrome = np.array(s, dtype=np.uint8)
+            if not np.array_equal(
+                exact._decode_one(syndrome), capped._decode_one(syndrome)
+            ):
+                mismatches += 1
+
+        self.assertEqual(mismatches, 0, msg="chi=32 must equal the exact coherent TN")
+
+    def test_mld_refuses_a_bond_cap(self):
+        """
+        "mld" is the exact reference decoder and refuses max_bond outright rather
+        than silently ignoring it -- callers who want truncation ask for "tn".
+        """
+        circuit = _rep_coherent(3, "RX", 0.45)
+
+        with self.assertRaises(ValueError) as ctx:
+            make_circuit_decoder("mld", circuit, 4)
+
+        self.assertIn("max_bond", str(ctx.exception), msg="error must name the knob")
+
 
 if __name__ == "__main__":
     rc = Exam(

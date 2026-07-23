@@ -3,9 +3,7 @@ title: The Coherent-Noise Engine
 outline: 2
 ---
 
-# The Coherent-Noise Engine <Badge type="info" text="Tutorial 05 of 7" />
-
-> Rotations and damping are not Pauli errors: represent them as signed quasiprobabilities over Cliffords.
+# The Coherent-Noise Engine <Badge type="info" text="Tutorial 05 of 10" />
 
 <script setup>
 import BlochPlay from '../_tut/coherent/BlochPlay.svelte'
@@ -46,12 +44,7 @@ z-axis. Drag to orbit.
 
 <SvelteIsland :component="BlochPlay" />
 
-*Click Cliffords to apply discrete moves; drag the $\theta$ slider to apply a continuous
-$R_Z(\theta)$ on top. The faint grey arrow + cyan arc show where the state was before the live
-rotation.*
-
-*Legend: x axis ($\ket +$); y axis ($\ket{+i}$); z axis ($\ket 0 / \ket 1$); state vector
-$\ket\psi$; ghost (pre-rotation); $R_Z(\theta)$ sweep arc.*
+*Legend: x = $\ket +$; y = $\ket{+i}$; z = $\ket 0 / \ket 1$; arrow = $\ket\psi$; ghost = pre-rotation; arc = $R_Z(\theta)$ sweep.*
 
 ::: info Why the amplitude matters
 After $R$ identical small rotations the net tilt is $R\theta$: it grows *linearly*. If you instead
@@ -73,12 +66,7 @@ measure "size", and they disagree.
 
 <SvelteIsland :component="AmpProb" />
 
-*Coherent error amplitude (solid cyan) vs. the probability of the matched Pauli approximation
-(dashed grey), as a function of the rotation angle $\theta$ (radians). Near $\theta=0$ the Pauli
-model under-counts the error by a whole power of $\theta$.*
-
-*Legend: coherent amplitude $\propto \theta$; Pauli prob. $\propto \theta^2$; $\theta$ marker
-(slider).*
+*Legend: solid = coherent amplitude $\propto \theta$; dashed = Pauli prob. $\propto \theta^2$; marker = $\theta$.*
 
 ::: warning A Pauli approximation is systematically optimistic
 Because coherent errors grow in amplitude ($\propto\theta$) while a same-strength Pauli error grows
@@ -114,13 +102,7 @@ wrapped in $H$ on each side, since $R_X = H\,R_Z\,H$.)
 
 <SvelteIsland :component="RotWeights" />
 
-*Bars are the four signed weights $w_k$ for the Cliffords $\{I, Z, S, S^\dagger\}$; bar SIGN =
-quasiprobability sign. Bars above the line are positive (sampled with prob $\propto |w|/\gamma$);
-bars below are NEGATIVE (the sign problem) and carry a minus sign into the sampled trajectory's
-importance weight.*
-
-*Legend: positive weight $w_k > 0$; negative weight $w_k < 0$; rotated $\ket\psi$; ghost $\ket +$
-($\theta=0$); sweep arc.*
+*Legend: bar up = $w_k > 0$; bar down = $w_k < 0$; arrow = rotated $\ket\psi$; ghost = $\ket +$ at $\theta=0$; arc = sweep.*
 
 ::: details Decompose RZ(theta) at theta = pi/8 = 22.5 deg
 1. Evaluate the trig at $\theta=\pi/8$: $c=\cos\theta\approx 0.9239$, $s=\sin\theta\approx 0.3827$.
@@ -178,13 +160,6 @@ As $\theta$ grows, weights dip negative and $\gamma$ climbs.
 
 <SvelteIsland :component="GammaCurve" />
 
-*Negativity $\gamma$ (unitless) vs. rotation angle $\theta$ (radians) for the RZ decomposition.
-$\gamma=1$ at $\theta=0$, and rises as branch weights go negative. The sampler later draws a branch
-with probability $|w|/\gamma$ and carries a signed importance weight of magnitude $\gamma$, so
-larger $\gamma$ means more sampling variance downstream.*
-
-*Legend: $\gamma(\theta) = \sum|w_k|$; $\theta$ marker (slider).*
-
 ::: info γ is the overhead, not the error
 Negativity does not make the simulation *wrong*: the answer it converges to is exact. It makes it
 *expensive*: each non-Pauli location multiplies the variance of a sampled estimate by roughly
@@ -214,17 +189,7 @@ vector toward the north pole $\ket 0$.
 
 <SvelteIsland :component="Damping" />
 
-*Bars are the three signed weights for the Cliffords {I, Z, R}; bar SIGN = quasiprobability sign.
-Amplitude damping pulls the Bloch vector toward |0> (the arrow shortens and tilts up, a mixed state).
-The weights q_I, q_Z, q_R include the negative q_Z; gamma = sum|q_k| is the (small) sampling
-overhead.*
-
-*Legend: positive weight; negative $q_Z$; damped $\ket\psi$ (shrinks toward $\ket 0$); z axis
-($\ket 0$ pole).*
-
-*Damping negativity gamma(p): negativity gamma (unitless) vs. loss probability p (unitless). The
-exact gamma(p) = sqrt(1-p) + p (accent) matches the 1 + p/2 small-p estimate (dashed) near p = 0,
-then turns over: it peaks at gamma = 1.25 around p = 3/4 and falls back to 1 at p = 1.*
+*Legend: bar up = positive weight; bar down = negative $q_Z$; arrow = damped $\ket\psi$; z = $\ket 0$ pole.*
 
 ## Why QEC must take this seriously
 

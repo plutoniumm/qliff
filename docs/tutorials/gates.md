@@ -3,9 +3,7 @@ title: Gates in a Stabilizer Simulator
 outline: 2
 ---
 
-# Gates in a Stabilizer Simulator <Badge type="info" text="Tutorial 01 of 7" />
-
-> Cliffords don't move amplitudes; they conjugate Pauli operators. See why CX makes X copy forward and Z copy backward.
+# Gates in a Stabilizer Simulator <Badge type="info" text="Tutorial 01 of 10" />
 
 <script setup>
 import HeisenbergDemo from '../_tut/gates/HeisenbergDemo.svelte'
@@ -30,8 +28,6 @@ so if $S$ stabilized the old state, $USU^{\dagger}$ stabilizes the new one $U\ke
 
 <SvelteIsland :component="HeisenbergDemo" />
 
-*The operator IS the state here: +Z pins |0⟩, +X pins |+⟩, −Y pins |−i⟩, ... (colors: X part, Z part, + sign, − sign.)*
-
 ::: tip Operators, never 2^n numbers
 $H$ on $+Z$ (which is $\ket0$) gives $+X$ (which is $\ket+$), the Hadamard basis change. The whole simulation is bookkeeping on a handful of bits per operator, which is why qliff scales to thousands of qubits where a state vector cannot.
 :::
@@ -43,8 +39,6 @@ To compute with Paulis we encode each single-qubit factor as two bits (an x bit 
 **Pauli ↔ bits**
 
 <SvelteIsland :component="BitsDemo" />
-
-*Y is x=z=1 in the tableau (the i in Y=iXZ lives in the bookkeeping, not these bits). (colors: x bit (1 => has X-part), z bit (1 => has Z-part).)*
 
 ::: info The full tableau
 A stabilizer state of $n$ qubits is $n$ such rows (qliff stores $2n$ rows, the extra $n$ being destabilizers, but one conjugated row already tells the whole gate story). A gate edits these bits column by column; that is the entire engine.
@@ -61,8 +55,6 @@ $\textsf{X},\textsf{Z},\textsf{Y}$ never move bits at all; they only flip the si
 **Bit-level gate playground**
 
 <SvelteIsland :component="SingleGateDemo" />
-
-*Set a Pauli, then apply gates. Y→−Y under H is the xz sign term firing. (colors: x bit, z bit, + sign, − sign.)*
 
 ::: details Worked example: H on Z, then S on X (every number from the rules)
 
@@ -96,8 +88,6 @@ Two bit copies fall out, and they go in *opposite directions*: $x_b\,{\oplus}{=}
 
 <SvelteIsland :component="CXDemo" />
 
-*Choose an input Pauli, then read off CX·input·CX†. Control = q0, target = q1. (colors: X part copies forward, Z part copies backward, Y part, control / target qubit.)*
-
 ::: warning Control and target are NOT symmetric
 A natural guess is that CX copies the control onto the target for everything. That holds for X, but Z propagates the *other way*, target -> control. $\textsf{X}$ goes forward, $\textsf{Z}$ goes backward. Getting this direction wrong is a common source of stabilizer-simulator bugs.
 :::
@@ -129,8 +119,6 @@ This propagation is what QEC cares about. Because $\textsf{X}$ copies forward th
 
 <SvelteIsland :component="PropagationDemo" />
 
-*The boxed letter on each wire is the Pauli currently riding it. Faded gates haven't executed yet at this scrub step. (colors: X on a wire, Z on a wire, injected fault = ring, final support = dot.)*
-
 ::: details Worked example: One X on the control lights two detectors
 
 1. Inject $X$ on $q_0$ just before $\textsf{CX}\,0{\to}1$ (set inject = X, qubit q0, before gate #1).
@@ -153,8 +141,6 @@ The sign bit is more than bookkeeping. $+Z$ stabilizes $\ket0$, so a $Z$ measure
 **Sign carries the outcome**
 
 <SvelteIsland :component="SignsDemo" />
-
-*An X flips +Z↔−Z, i.e. |0⟩↔|1⟩: the sign bit alone tracks the Z-measurement result. (colors: + sign → measures 0, − sign → measures 1.)*
 
 ::: info Gates are deterministic; only measurement rolls dice
 Every gate on this page is a *deterministic* rewrite of operator bits; nothing is random. In a Clifford simulator the **only** source of randomness is measuring a Pauli that anticommutes with a stabilizer, where the outcome is a fair coin and the tableau is updated to match. That split (deterministic operator updates, randomness only at measurement) is what makes the whole scheme efficient and exactly samplable.

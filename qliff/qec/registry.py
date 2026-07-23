@@ -33,6 +33,8 @@ from .color import (
 
 # Pauli DEM decoders every graphlike family offers (matching default + dense
 # fallbacks). Non-Pauli / coherent channels route to `coherent` (see decoder.py).
+# "mld" and "tn" are the same contraction offered under two contracts: "mld" exact,
+# "tn" bond-truncatable (max_bond); both are listed so a family offers each.
 PAULI_DECODERS = (
     "mwpm",
     "bposd",

@@ -3,9 +3,7 @@ title: Logical Error Rate & Fidelity
 outline: 2
 ---
 
-# Logical Error Rate & Fidelity <Badge type="info" text="Tutorial 07 of 7" />
-
-> Sample, decode, and compare; then read the threshold off a sweep with error bars.
+# Logical Error Rate & Fidelity <Badge type="info" text="Tutorial 08 of 10" />
 
 <script setup>
 import ShotsDemo from '../_tut/ler/ShotsDemo.svelte'
@@ -27,10 +25,8 @@ That is the whole verdict, and it is what qliff computes: $\text{shot is wrong} 
 <SvelteIsland :component="ShotsDemo" />
 
 Legend:
-- green: predicted = true (survived)
-- red: predicted != true (logical error)
-
-*48 decoded shots, each cell reading predicted / true for the logical observable. Green = decoder agreed with the truth (corrected); red = it disagreed (a logical error). The LER is the red fraction.*
+- green = survived (predicted = true)
+- red = logical error (predicted != true)
 
 ## Fidelity and LER {#fidelity}
 
@@ -59,11 +55,9 @@ The demo below runs a seeded Monte-Carlo in your browser: the distance-$d$ repet
 <SvelteIsland :component="ConvergeDemo" />
 
 Legend:
-- running LER estimate (purple line)
-- $\pm 1\sigma$ binomial band
-- exact LER (green dash)
-
-*Seeded Monte-Carlo of the repetition code. x = shots N (log); y = running LER estimate (% of shots). The purple trace is the running estimate; the band is $\pm 1\sigma = \pm\,\mathrm{stderr}$; the green dashed line is the exact LER. The band shrinks like $1/\sqrt{N}$.*
+- purple line = running LER estimate
+- band = $\pm 1\sigma$ binomial
+- green dash = exact LER
 
 ::: details An error bar from 37 failures in N = 4000 shots
 
@@ -91,17 +85,15 @@ with the result clamped to $[0,1]$. The weights average to one, so the estimate 
 
 $$\sigma_{\text{w}} \approx \gamma\,\sqrt{\dfrac{P_L}{N}} = \gamma\,\sigma_{\text{binom}} \;\Longrightarrow\; N_{\text{w}} \approx \gamma^2\,N_{\text{binom}}\ \text{for the same bar.}$$
 
-The negativity $\gamma \ge 1$ from the coherent-noise engine measures that spread: bigger $\gamma$ means noisier weights, a wider error bar, and many more shots for the same precision. (This ties back to the coherent-noise and noise-sampling pages.)
+The negativity $\gamma \ge 1$ from the coherent-noise engine measures that spread: bigger $\gamma$ means noisier weights, a wider error bar, and many more shots for the same precision. (This ties back to the coherent-noise and noise-sampling pages.) [Tutorial 07](./stratified) is the way out of the $\gamma^{2L}$ bill: sort the trajectories by fault count and the whole factor cancels out of a ratio, which is what `logical_error_rate(..., stratify=True)` runs.
 
 **Coherent shot cost**
 
 <SvelteIsland :component="WeightedDemo" />
 
 Legend:
-- Pauli: shots for 10% error bar
-- coherent ($\gamma$): inflated shot budget
-
-*Importance-weighted LER. Bars compare shots needed for a 10% relative error bar: Pauli (binomial) vs coherent (variance inflated by $\gamma^2$). The estimate stays unbiased as $\gamma$ grows, but the standard error grows too: you pay for non-Pauli noise in shots.*
+- Pauli = binomial shot budget
+- coherent = budget inflated by $\gamma^2$
 
 ::: details The gamma cost: how many more shots at gamma = 2?
 
@@ -125,10 +117,8 @@ Below, the smooth line is the exact repetition-code LER and the points are seede
 <SvelteIsland :component="SweepDemo" />
 
 Legend:
-- exact LER(p) curve
-- Monte-Carlo point ($\pm 1\sigma$)
-
-*A reproducible LER(p) sweep for one distance d: x = physical rate p, y = logical rate $P_L$ (log). Exact curve plus seeded Monte-Carlo with binomial error bars: the same (p, ler, stderr) triples qliff's sweep yields.*
+- curve = exact LER(p)
+- point = Monte-Carlo ($\pm 1\sigma$)
 
 ## The threshold plot {#threshold}
 
@@ -144,11 +134,9 @@ The plot below uses a standard **phenomenological model** (it is a model, not a 
 <SvelteIsland :component="ThresholdDemo" />
 
 Legend:
-- one line per distance $d$
-- $p_{th}$ (curves cross)
-- break-even $\mathrm{LER} = p$
-
-*LER vs p (log-log) for several distances d. x = physical rate p, y = logical rate $P_L$. Curves cross at $p_{th}$ (dashed gold), the threshold. Below it, more distance = less logical error; above it, more distance = more. Dotted grey is break-even $\mathrm{LER} = p$.*
+- line = one distance $d$
+- $p_{th}$ = curves cross
+- break-even = $\mathrm{LER} = p$
 
 ::: tip Read it off
 Find the crossing. To its left, the steepest (highest-$d$) curve is on the bottom: scaling helps. To its right, that same curve is on top: scaling hurts. A qliff threshold plot is this same picture, with each point produced by a sample -> decode -> compare run instead of a formula.
@@ -160,7 +148,7 @@ Every number on this page comes from the same five-stage loop, repeated $N$ time
 
 $$\underbrace{\text{noise}}_{\text{1}} \rightarrow \underbrace{\text{syndrome}}_{\text{2}} \rightarrow \underbrace{\text{decode}}_{\text{3}} \rightarrow \underbrace{\text{compare}}_{\text{4}} \rightarrow \underbrace{\mathrm{LER} = 1 - \text{fidelity}}_{\text{5}}$$
 
-Stage 1 injects errors (Pauli channels sample directly; coherent channels need the weighted sampler from the previous page). Stage 2 reads the stabilizers into a syndrome. Stage 3 is the decoder (MWPM, belief propagation, or a tensor network from the first three pages). Stage 4 is the one-bit verdict of section 1. Stage 5 averages the verdicts into the LER and its error bar.
+Stage 1 injects errors (Pauli channels sample directly; coherent channels need the weighted sampler of [Tutorial 06](./noise), or its [stratified](./stratified) refinement). Stage 2 reads the stabilizers into a syndrome. Stage 3 is the decoder (MWPM, belief propagation, or a tensor network from the first three pages). Stage 4 is the one-bit verdict of section 1. Stage 5 averages the verdicts into the LER and its error bar.
 
 ## Implementation {#implementation}
 
@@ -280,5 +268,5 @@ for d in [3, 5]:
 Both physical rates sit below this circuit family's threshold, so $d=5$ suppresses the LER further than $d=3$ at each point. Choosing well: pick several **distances** to expose the crossing; use enough **shots** that the rarest LER you care about is resolved ($N \gtrsim 1/\mathrm{LER}$, and $\times\,\gamma^2$ more for coherent noise); pick a **decoder** matched to your code; and **fix the seed** so the whole sweep is reproducible.
 
 ::: info The series in summary
-Three decoders turn a syndrome into a correction: **matching**, **belief propagation**, and **tensor networks**. Two noise pages model the input: **coherent channels** as signed quasiprobabilities, sampled into **weighted trajectories**. This final page is the scoreboard: feed decoder and noise into sample -> decode -> compare, average the verdicts, and read the **logical error rate**, its **error bar**, and the **threshold** that says whether scaling up will save you.
+Three decoders turn a syndrome into a correction: **matching**, **belief propagation**, and **tensor networks**. Three noise pages model the input: **coherent channels** as signed quasiprobabilities, sampled into **weighted trajectories**, then **stratified by fault count** so the weights' common factor cancels. This final page is the scoreboard: feed decoder and noise into sample -> decode -> compare, average the verdicts, and read the **logical error rate**, its **error bar**, and the **threshold** that says whether scaling up will save you.
 :::

@@ -16,14 +16,39 @@ from .lattice import _emit_z_memory, _rotated_plaquettes, build_circuit
 #    for the rotated family); the colourings then split under asymmetric noise (AD).
 #  - edge: which alternating set of boundary edges is promoted to stabilisers; also
 #    flips the logical orientation (column vs row). Rotated family only.
+# Two further knobs are continuous rather than enumerated: `memory` picks WHICH
+# memory experiment runs (see SURFACE_MEMORIES), and `deform` replaces the pattern
+# enum with an explicit per-qubit Clifford deformation (see SURFACE_DEFORMS) so the
+# random (Pi_XZ, Pi_YZ) families are expressible.
 SURFACE_PATTERNS = ("css", "xzzx")
 SURFACE_STARTS = ("Z", "X")
 SURFACE_EDGES = ("even", "odd")
 
+# `memory`: which logical observable the experiment tracks. "Z" prepares logical
+# |0> and tracks the Z-line logical, so the primary checks catch X-type errors and
+# a Z error is harmless BY CONSTRUCTION -- correct physics, but a degenerate probe
+# under Z-biased noise, where the LER is then identically zero. "X" is the dual
+# experiment (logical |+>, X-line logical), implemented as a global Hadamard frame
+# composed onto every qubit's deformation.
+SURFACE_MEMORIES = ("Z", "X")
 
-def _check_surface_knobs(pattern: str, start: str, edge: str) -> None:
+# `deform`: per-qubit single-qubit Clifford deformations, as the (X-image, Z-image)
+# of the conjugation. "I" leaves the qubit alone, "H" is the XZ swap (what the xzzx
+# pattern applies to one sublattice), "H_YZ" is the YZ swap. Frames compose through
+# _compose_frames and are emitted by FRAME_PREP in lattice.py.
+SURFACE_DEFORMS = {
+    "I": ("X", "Z"),
+    "H": ("Z", "X"),
+    "H_YZ": ("X", "Y"),
+}
+_PAULIS = {"X", "Y", "Z"}
+
+
+def _check_surface_knobs(
+    pattern: str, start: str, edge: str, memory: str = "Z"
+) -> None:
     """
-    Validate the three stabiliser-pattern knobs against the supported sets.
+    Validate the stabiliser-pattern knobs against the supported sets.
     """
     if pattern not in SURFACE_PATTERNS:
         raise ValueError(f"unknown pattern {pattern!r}; expected {SURFACE_PATTERNS}")
@@ -31,34 +56,126 @@ def _check_surface_knobs(pattern: str, start: str, edge: str) -> None:
         raise ValueError(f"unknown start {start!r}; expected {SURFACE_STARTS}")
     if edge not in SURFACE_EDGES:
         raise ValueError(f"unknown edge {edge!r}; expected {SURFACE_EDGES}")
+    if memory not in SURFACE_MEMORIES:
+        raise ValueError(f"unknown memory {memory!r}; expected {SURFACE_MEMORIES}")
+
+
+def _pauli_map(frame: tuple[str, str]) -> dict[str, str]:
+    """
+    The full X/Y/Z image of a deformation frame given its (X-image, Z-image): the
+    Y-image is the remaining Pauli, since conjugation permutes the three.
+    """
+    im_x, im_z = frame
+
+    return {
+        "X": im_x,
+        "Y": (_PAULIS - {im_x, im_z}).pop(),
+        "Z": im_z,
+    }
+
+
+def _compose_frames(
+    outer: tuple[str, str], inner: tuple[str, str]
+) -> tuple[str, str]:
+    """
+    The frame that applies `inner` and then `outer`. Signs are not tracked: the
+    result names a support permutation, and lattice.FRAME_PREP emits the canonical
+    sign-positive Clifford realising it.
+    """
+    outer_map = _pauli_map(outer)
+
+    return (outer_map[inner[0]], outer_map[inner[1]])
+
+
+def _deform_pauli(pauli: str, frame: tuple[str, str]) -> str:
+    """
+    Rewrite a single-qubit Pauli under a deformation frame.
+    """
+    return _pauli_map(frame)[pauli]
+
+
+def _has_mixed_face(
+    stabilizers: list[tuple[bool, list[tuple[int, str]]]],
+) -> bool:
+    """
+    Whether any check carries more than one Pauli type across its corners -- the
+    only reason to force universal-H extraction. A uniform face (all X, all Y, all
+    Z) reads correctly on the cheaper per-check path, so a globally deformed CSS
+    code keeps the bare CX ladder for its pure-Z checks.
+    """
+    return any(
+        len({pauli for _q, pauli in corners}) > 1 for _pr, corners in stabilizers
+    )
+
+
+def _qubit_frames(
+    n_data: int,
+    in_h: dict[int, bool],
+    deform: dict[int, str] | None,
+    memory: str,
+) -> dict[int, tuple[str, str]]:
+    """
+    Per-qubit deformation frames for a layout. `deform` (qubit -> SURFACE_DEFORMS
+    name, missing qubits undeformed) REPLACES the pattern-derived `in_h` sublattice
+    Hadamard when supplied; memory="X" then composes a global Hadamard on top,
+    turning the Z-memory into its dual.
+    """
+    if deform is not None:
+        unknown = set(deform.values()) - set(SURFACE_DEFORMS)
+        if unknown:
+            raise ValueError(
+                f"unknown deformation(s) {sorted(unknown)}; "
+                f"expected {sorted(SURFACE_DEFORMS)}"
+            )
+        off_grid = [q for q in deform if not 0 <= q < n_data]
+        if off_grid:
+            raise ValueError(
+                f"deform names qubit(s) {sorted(off_grid)} outside 0..{n_data - 1}"
+            )
+        frames = {
+            q: SURFACE_DEFORMS[deform.get(q, "I")] for q in range(n_data)
+        }
+    else:
+        frames = {
+            q: SURFACE_DEFORMS["H" if in_h[q] else "I"] for q in range(n_data)
+        }
+
+    if memory == "X":
+        frames = {
+            q: _compose_frames(SURFACE_DEFORMS["H"], f) for q, f in frames.items()
+        }
+
+    return frames
 
 
 def _emit_memory(
     n_data: int,
     stabilizers: list[tuple[bool, list[tuple[int, str]]]],
     observables: list[list[tuple[int, str]]],
-    q_basis: dict[int, str],
+    frames: dict[int, tuple[str, str]],
     rounds: int,
     channel: str,
     p: float,
     universal_h: bool = False,
     prep: bool = False,
+    bias: float | None = None,
 ) -> Circuit:
     """
     Generalised syndrome-extraction memory for an arbitrary (possibly non-CSS)
     stabiliser code. `stabilizers` is a list of (primary, corners) where corners is
-    [(data_qubit, "X"|"Z")]; `primary` checks declare round-to-round detectors and
-    are reconstructed at readout. `q_basis` gives each data qubit's frame ("X" =>
-    init |+> and read in the X basis, "Z" => |0> / Z basis); every primary check and
-    observable must touch a qubit with the matching Pauli (the caller guarantees
-    this). Attaches the given-order ancillas (n_data + i) and the X-frame data qubits
-    and routes through the shared _emit_z_memory. `universal_h` (the XZZX frames)
-    reads EVERY check with a |+> ancilla and per-corner CX / CZ so mixed faces
-    extract correctly; CSS callers leave it off, keeping the bare CX ladder for
-    pure-Z checks. `prep` prepends a noiseless projection round (see _emit_z_memory).
-    Per-round data noise is the requested `channel` at strength p.
+    [(data_qubit, "X"|"Y"|"Z")]; `primary` checks declare round-to-round detectors
+    and are reconstructed at readout. `frames` gives each data qubit's deformation
+    frame (see lattice.FRAME_PREP): the qubit is prepared in the +1 eigenstate of the
+    frame's Z-image and read in that basis. Every primary check and observable must
+    touch a qubit with the matching Pauli -- which holds automatically, since primary
+    faces are pure-Z before deformation, so each corner becomes exactly that qubit's
+    Z-image. Attaches the given-order ancillas (n_data + i) and routes through the
+    shared _emit_z_memory. `universal_h` (the deformed frames) reads EVERY check with
+    a |+> ancilla and per-corner CX / CY / CZ so mixed faces extract correctly; CSS
+    callers leave it off, keeping the bare CX ladder for pure-Z checks. `prep`
+    prepends a noiseless projection round (see _emit_z_memory). Per-round data noise
+    is the requested `channel` at strength p, Z-biased by `bias` if given.
     """
-    x_frame = [q for q in range(n_data) if q_basis.get(q, "Z") == "X"]
     stabs = [
         (primary, n_data + i, corners)
         for i, (primary, corners) in enumerate(stabilizers)
@@ -71,30 +188,24 @@ def _emit_memory(
         rounds,
         channel,
         p,
-        x_frame=x_frame,
+        frames=frames,
         universal_h=universal_h,
         prep=prep,
+        bias=bias,
     )
-
-
-def _flip_on(pauli: str, condition: bool) -> str:
-    """
-    Swap a single-qubit Pauli X<->Z when `condition` (a Hadamard sits on the qubit).
-    """
-    if not condition:
-        return pauli
-
-    return "X" if pauli == "Z" else "Z"
 
 
 def _sym_vec(op: list[tuple[int, str]], n: int) -> int:
     """
-    Pack a Pauli operator [(qubit, "X"|"Z")] into a 2n-bit symplectic int
-    (X part low, Z part high).
+    Pack a Pauli operator [(qubit, "X"|"Y"|"Z")] into a 2n-bit symplectic int
+    (X part low, Z part high); Y sets both bits.
     """
     v = 0
     for q, p in op:
-        v ^= 1 << (q if p == "X" else n + q)
+        if p != "Z":
+            v ^= 1 << q
+        if p != "X":
+            v ^= 1 << (n + q)
 
     return v
 
@@ -102,9 +213,13 @@ def _sym_vec(op: list[tuple[int, str]], n: int) -> int:
 def _sym_commute(a: int, b: int, n: int) -> bool:
     """
     Whether two symplectic-packed Paulis commute (overlap parity of X-vs-Z parts).
+    The two cross terms are XORed, not ORed: parity(t1) + parity(t2) == parity(t1 ^
+    t2), whereas OR silently drops the case where BOTH terms hit the same qubit --
+    which is exactly two Y operators meeting, so it only bites once Y-type corners
+    exist (the H_YZ deformations).
     """
     mask = (1 << n) - 1
-    cross = ((a & mask) & (b >> n)) | ((a >> n) & (b & mask))
+    cross = ((a & mask) & (b >> n)) ^ ((a >> n) & (b & mask))
 
     return bin(cross).count("1") % 2 == 0
 
@@ -135,17 +250,19 @@ def _in_span(gens: list[int], target: int) -> bool:
 def _pick_logical(
     n_data: int,
     stabilizers: list[tuple[bool, list[tuple[int, str]]]],
-    in_h: dict[int, bool],
+    frames: dict[int, tuple[str, str]],
     lines: list[list[int]],
 ) -> list[tuple[int, str]]:
     """
     First border line (frame-adjusted Z on each qubit) that commutes with every
-    stabiliser and is not a stabiliser product -- the tracked Z-logical. The
-    candidate `lines` are qubit-index borders in preference order.
+    stabiliser and is not a stabiliser product -- the tracked logical. The candidate
+    `lines` are qubit-index borders in preference order. Deformation-agnostic: the
+    candidate is always the line's Z operator pushed through each qubit's frame, so
+    an arbitrary per-qubit `deform` needs no change here.
     """
     gens = [_sym_vec(corners, n_data) for _pr, corners in stabilizers]
     for line in lines:
-        cand = [(q, _flip_on("Z", in_h[q])) for q in line]
+        cand = [(q, _deform_pauli("Z", frames[q])) for q in line]
         v = _sym_vec(cand, n_data)
         if all(_sym_commute(v, g, n_data) for g in gens) and not _in_span(gens, v):
             return cand
@@ -195,26 +312,33 @@ def repetition_code(
 
 
 def _rotated_layout(
-    rows: int, cols: int, pattern: str, start: str, edge: str
+    rows: int,
+    cols: int,
+    pattern: str,
+    start: str,
+    edge: str,
+    deform: dict[int, str] | None = None,
+    memory: str = "Z",
 ) -> tuple[int, list, list, dict]:
     """
-    Layout (n_data, stabilizers, observables, q_basis) for a non-default rotated
+    Layout (n_data, stabilizers, observables, frames) for a non-default rotated
     surface-code variant on a rows x cols data grid (need not be square). The
     plaquette checkerboard and the boundary set come from _rotated_plaquettes for
-    the chosen `edge`; for css, `start="X"` RECOLOURS the checkerboard (swaps every
-    face's kind) while the experiment stays a Z-memory -- Z checks are primary and
-    the tracked logical is the Z border line the recoloured boundary admits (found
-    by _pick_logical). `pattern="xzzx"` puts one data sublattice in the Hadamard
-    frame, conjugating per-corner Paulis, the logical and the readout basis; every
-    face then carries the same XZZX pattern, so there is no checkerboard to
+    the chosen `edge`; `start="X"` RECOLOURS the checkerboard (swaps every face's
+    kind), and the tracked logical is the border line the recoloured boundary admits
+    (found by _pick_logical). `pattern="xzzx"` puts one data sublattice in the
+    Hadamard frame, conjugating per-corner Paulis, the logical and the readout basis;
+    every face then carries the same XZZX pattern, so there is no checkerboard to
     recolour -- `start="X"` instead mirrors the frame onto the (r+c)-odd sublattice
     (a global X<->Z relabel). On grids with an even dimension that is a symmetry
-    (EZ=EX, OZ=OX): xzzx variants differ by edge/orientation only. Emitted via
-    _emit_memory.
+    (EZ=EX, OZ=OX): xzzx variants differ by edge/orientation only. An explicit
+    `deform` map REPLACES `pattern` (start still recolours, edge still picks the
+    boundary), and `memory="X"` runs the dual experiment. Emitted via _emit_memory.
     """
     n_data = rows * cols
     plaq = _rotated_plaquettes(rows, cols, edge)
-    if start == "X" and pattern == "css":
+    recolour = start == "X" and (deform is not None or pattern == "css")
+    if recolour:
         plaq = [("X" if kind == "Z" else "Z", touch) for kind, touch in plaq]
 
     h_par = 1 if start == "X" and pattern == "xzzx" else 0
@@ -223,8 +347,9 @@ def _rotated_layout(
         for r in range(rows)
         for col in range(cols)
     }
+    frames = _qubit_frames(n_data, in_h, deform, memory)
     stabilizers = [
-        (kind == "Z", [(q, _flip_on(kind, in_h[q])) for q in touch])
+        (kind == "Z", [(q, _deform_pauli(kind, frames[q])) for q in touch])
         for kind, touch in plaq
     ]
 
@@ -234,10 +359,9 @@ def _rotated_layout(
         [r * cols + cols - 1 for r in range(rows)],
         [(rows - 1) * cols + col for col in range(cols)],
     ]
-    logical = _pick_logical(n_data, stabilizers, in_h, lines)
-    q_basis = {q: ("X" if in_h[q] else "Z") for q in range(n_data)}
+    logical = _pick_logical(n_data, stabilizers, frames, lines)
 
-    return n_data, stabilizers, [logical], q_basis
+    return n_data, stabilizers, [logical], frames
 
 
 def rotated_surface_code(
@@ -250,6 +374,9 @@ def rotated_surface_code(
     start: str = "Z",
     edge: str = "even",
     prep: bool = False,
+    memory: str = "Z",
+    deform: dict[int, str] | None = None,
+    bias: float | None = None,
 ) -> Circuit:
     """
     Rotated planar surface-code memory: rows x cols data grid (need not be square),
@@ -257,27 +384,35 @@ def rotated_surface_code(
     start, edge) select the stabiliser pattern (see SURFACE_PATTERNS/STARTS/EDGES);
     the css/Z/even default is the Z-memory below -- only Z stabilizers declare
     round-to-round detectors (graphlike), final data M seeds boundary Z detectors and
-    the logical-Z observable along a column. Other combinations route through
-    _rotated_layout + _emit_memory (universal-H extraction only for xzzx frames).
-    `prep` prepends a noiseless projection round so the first noise layer hits a
-    code state rather than |0>^n (an AD fixed point) -- see _emit_z_memory.
+    the logical-Z observable along a column. `memory="X"` runs the dual experiment
+    instead (logical |+>, X-line logical), which is the one to use under Z-biased
+    noise -- a Z-memory is immune to Z errors by construction, so its LER there is
+    identically zero. `deform` is an explicit {qubit: "I"|"H"|"H_YZ"} map that
+    replaces `pattern` for the random (Pi_XZ, Pi_YZ) families. `bias` is the Z-bias
+    eta of a vector Pauli channel (see bias_split). Non-default combinations route
+    through _rotated_layout + _emit_memory (universal-H extraction whenever any qubit
+    is deformed). `prep` prepends a noiseless projection round so the first noise
+    layer hits a code state rather than a product state (an AD fixed point) -- see
+    _emit_z_memory.
     """
-    _check_surface_knobs(pattern, start, edge)
-    if (pattern, start, edge) != ("css", "Z", "even"):
-        n_data, stabilizers, observables, q_basis = _rotated_layout(
-            rows, cols, pattern, start, edge
+    _check_surface_knobs(pattern, start, edge, memory)
+    plain = (pattern, start, edge, memory) == ("css", "Z", "even", "Z")
+    if not plain or deform is not None:
+        n_data, stabilizers, observables, frames = _rotated_layout(
+            rows, cols, pattern, start, edge, deform, memory
         )
 
         return _emit_memory(
             n_data,
             stabilizers,
             observables,
-            q_basis,
+            frames,
             rounds,
             channel,
             p,
-            universal_h=pattern == "xzzx",
+            universal_h=_has_mixed_face(stabilizers),
             prep=prep,
+            bias=bias,
         )
 
     n_data = rows * cols
@@ -296,7 +431,7 @@ def rotated_surface_code(
     observables = [[(q, "Z") for q in column]]
 
     return _emit_z_memory(
-        n_data, stabilizers, observables, rounds, channel, p, prep=prep
+        n_data, stabilizers, observables, rounds, channel, p, prep=prep, bias=bias
     )
 
 
@@ -333,32 +468,37 @@ def _unrotated_grid(distance: int) -> tuple[dict, list, list]:
 
 
 def _unrotated_layout(
-    distance: int, pattern: str, start: str
+    distance: int,
+    pattern: str,
+    start: str,
+    deform: dict[int, str] | None = None,
+    memory: str = "Z",
 ) -> tuple[int, list, list, dict]:
     """
-    Layout (n_data, stabilizers, observables, q_basis) for a non-default unrotated
+    Layout (n_data, stabilizers, observables, frames) for a non-default unrotated
     surface-code variant. The standard layout promotes every star/plaquette check
     (there is no alternate boundary set to choose, so `edge` does not apply here).
-    For css, `start="X"` RECOLOURS the lattice (stars become Z checks, plaquettes
-    X) while the experiment stays a Z-memory with the Z border-line logical the
-    recoloured boundary admits (_pick_logical); `pattern="xzzx"` puts one data-row
-    sublattice in the Hadamard frame, and (as in _rotated_layout) `start="X"` then
-    mirrors the frame onto the odd rows instead of recolouring. Emitted via
-    _emit_memory.
+    `start="X"` RECOLOURS the lattice (stars become Z checks, plaquettes X) with the
+    border-line logical the recoloured boundary admits (_pick_logical);
+    `pattern="xzzx"` puts one data-row sublattice in the Hadamard frame, and (as in
+    _rotated_layout) `start="X"` then mirrors the frame onto the odd rows instead of
+    recolouring. `deform` / `memory` carry the same meaning as in _rotated_layout.
+    Emitted via _emit_memory.
     """
     side = 2 * distance - 1
     data, x_checks, z_checks = _unrotated_grid(distance)
     n_data = len(data)
-    if start == "X" and pattern == "css":
+    if start == "X" and (deform is not None or pattern == "css"):
         x_checks, z_checks = z_checks, x_checks
     h_row = 1 if start == "X" and pattern == "xzzx" else 0
     in_h = {idx: pattern == "xzzx" and r % 2 == h_row for (r, _c), idx in data.items()}
+    frames = _qubit_frames(n_data, in_h, deform, memory)
 
     stabilizers = []
     for _anc, touch in z_checks:
-        stabilizers.append((True, [(q, _flip_on("Z", in_h[q])) for q in touch]))
+        stabilizers.append((True, [(q, _deform_pauli("Z", frames[q])) for q in touch]))
     for _anc, touch in x_checks:
-        stabilizers.append((False, [(q, _flip_on("X", in_h[q])) for q in touch]))
+        stabilizers.append((False, [(q, _deform_pauli("X", frames[q])) for q in touch]))
 
     lines = [
         [data[(0, col)] for col in range(side) if (0, col) in data],
@@ -366,10 +506,9 @@ def _unrotated_layout(
         [data[(side - 1, col)] for col in range(side) if (side - 1, col) in data],
         [data[(r, side - 1)] for r in range(side) if (r, side - 1) in data],
     ]
-    logical = _pick_logical(n_data, stabilizers, in_h, lines)
-    q_basis = {q: ("X" if in_h[q] else "Z") for q in range(n_data)}
+    logical = _pick_logical(n_data, stabilizers, frames, lines)
 
-    return n_data, stabilizers, [logical], q_basis
+    return n_data, stabilizers, [logical], frames
 
 
 def unrotated_surface_code(
@@ -380,30 +519,36 @@ def unrotated_surface_code(
     pattern: str = "css",
     start: str = "Z",
     edge: str = "even",
+    memory: str = "Z",
+    deform: dict[int, str] | None = None,
+    bias: float | None = None,
 ) -> Circuit:
     """
     Unrotated (standard) planar surface-code memory: data on the (r+c)-even sites
     of a (2d-1)^2 grid, star X-checks and plaquette Z-checks, `channel` noise
     (strength p / theta) per round. (pattern, start) select the stabiliser pattern;
     `edge` is accepted for a uniform surface API but has no effect here (the standard
-    layout has no alternate boundary set). The css/Z default is the Z-memory below;
-    other combinations route through _unrotated_layout + _emit_memory.
+    layout has no alternate boundary set). `memory`, `deform` and `bias` carry the
+    same meaning as in rotated_surface_code. The css/Z/Z-memory default is the plain
+    Z-memory below; other combinations route through _unrotated_layout +
+    _emit_memory.
     """
-    _check_surface_knobs(pattern, start, edge)
-    if (pattern, start) != ("css", "Z"):
-        n_data, stabilizers, observables, q_basis = _unrotated_layout(
-            distance, pattern, start
+    _check_surface_knobs(pattern, start, edge, memory)
+    if (pattern, start, memory) != ("css", "Z", "Z") or deform is not None:
+        n_data, stabilizers, observables, frames = _unrotated_layout(
+            distance, pattern, start, deform, memory
         )
 
         return _emit_memory(
             n_data,
             stabilizers,
             observables,
-            q_basis,
+            frames,
             rounds,
             channel,
             p,
-            universal_h=pattern == "xzzx",
+            universal_h=_has_mixed_face(stabilizers),
+            bias=bias,
         )
 
     side = 2 * distance - 1
@@ -415,7 +560,9 @@ def unrotated_surface_code(
     logical_z = [data[(0, col)] for col in range(side) if (0, col) in data]
     observables = [[(q, "Z") for q in logical_z]]
 
-    return _emit_z_memory(n_data, stabilizers, observables, rounds, channel, p)
+    return _emit_z_memory(
+        n_data, stabilizers, observables, rounds, channel, p, bias=bias
+    )
 
 
 def _toric_grid(distance: int) -> tuple[int, list, list, list]:

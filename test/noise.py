@@ -11,6 +11,9 @@ from MDR import Exam, Question, load
 
 from qliff import Circuit
 from qliff.noise import AmplitudeDamping, Sampler
+from qliff.noise.sampler import compile_signed
+from qliff.qec.codes import rotated_surface_code
+from qliff.qec.sampler import WeightedDetectorSampler
 
 _H = np.array([[1, 1], [1, -1]], dtype=complex) / math.sqrt(2)
 _PAULIS = {
@@ -326,6 +329,67 @@ class StratifiedTests(Question):
         )
 
 
+def _weighted_obs_error(dets, obs, weights):
+    # importance-weighted fraction of shots whose observable flipped -- a fixed
+    # statistic to probe the sampler's unbiasedness without needing a decoder.
+    if obs.shape[1] == 0:
+        err = np.zeros(dets.shape[0])
+    else:
+        err = np.any(obs != 0, axis=1).astype(np.float64)
+    contrib = weights * err
+
+    return float(contrib.mean()), float(contrib.std() / math.sqrt(len(weights)))
+
+
+class WeightedFastPathTests(Question):
+    """
+    The WeightedDetectorSampler Rust signed fast path (ColTableau.sample_batch_
+    signed) must estimate the same weighted statistic as the Python trajectory loop
+    it replaces: unbiased for the quasiprobability channel, only the RNG differs.
+    """
+
+    def test_amplitude_damping_reaches_fast_path(self):
+        """
+        An amplitude-damping memory lowers to the signed batched sampler -- its reset
+        branch compiles to opcode 9 -- so the Rust path, not the fallback, runs.
+        """
+        c = rotated_surface_code(3, 3, 1, 0.1, channel="AMPLITUDE_DAMP", prep=True)
+
+        self.assertIsNotNone(compile_signed(c), msg="AD must reach the Rust fast path")
+
+    def test_fast_matches_python_amplitude_damping(self):
+        """
+        The Rust fast path and the Python fallback agree within 3 sigma on the
+        weighted observable-flip rate of an amplitude-damping memory -- the
+        unbiasedness check for the new signed sampler.
+        """
+        c = rotated_surface_code(3, 3, 1, 0.1, channel="AMPLITUDE_DAMP", prep=True)
+        ws = WeightedDetectorSampler(c)
+        fast, fe = _weighted_obs_error(*ws.sample(40000, seed=7))
+        py, pe = _weighted_obs_error(*ws._sample(40000, seed=7))
+        sigma = math.sqrt(fe**2 + pe**2)
+
+        self.assertLess(
+            abs(fast - py),
+            3.0 * sigma + 1e-9,
+            msg=f"fast {fast:.4f} vs python {py:.4f} (3 sigma {3 * sigma:.4f})",
+        )
+
+    def test_mean_weight_is_trace_preserving(self):
+        """
+        The signed importance weights average to ~1: amplitude damping is a trace-
+        preserving quasiprobability mix, so the mean trajectory weight is 1.
+        """
+        c = rotated_surface_code(3, 3, 1, 0.1, channel="AMPLITUDE_DAMP", prep=True)
+        _dets, _obs, weights = WeightedDetectorSampler(c).sample(40000, seed=11)
+
+        self.assertLess(
+            abs(float(weights.mean()) - 1.0),
+            0.03,
+            msg=f"mean weight {weights.mean():.4f} must be ~ 1.0",
+        )
+
+
 if __name__ == "__main__":
     rc = 0
     rc |= Exam("Noise", "Pauli-noise Monte-Carlo sampling", "noise.md").run(
@@ -340,4 +404,9 @@ if __name__ == "__main__":
     rc |= Exam("Stratified", "Stratified importance sampling", "stratified.md").run(
         load(StratifiedTests)
     )
+    rc |= Exam(
+        "WeightedFastPath",
+        "Rust signed batched weighted detector sampler",
+        "weighted_fast_path.md",
+    ).run(load(WeightedFastPathTests))
     sys.exit(rc)

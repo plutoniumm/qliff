@@ -3,9 +3,7 @@ title: Simulating Noise
 outline: 2
 ---
 
-# Simulating Noise <Badge type="info" text="Tutorial 06 of 7" />
-
-> Amplitude damping is not a Pauli flip, yet a Clifford simulator can run it: three Clifford branches, signed weights, one branch drawn per shot.
+# Simulating Noise <Badge type="info" text="Tutorial 06 of 10" />
 
 <script setup>
 import Trajectory from '../_tut/noise/Trajectory.svelte'
@@ -174,15 +172,13 @@ A circuit has many noise locations, and a **trajectory** is one pass through all
 
 <SvelteIsland :component="Trajectory" />
 
-*Four qubits, each with one `AMPLITUDE_DAMP(p)` location. Step the location control: each step rolls one die. The bar shows the three $|q_k|$ slots on $[0,\gamma)$; the marker is the draw $t = u\gamma$; the fired branch labels the square on the wire. At the default seed the second location draws the $Z$ branch, so the running weight flips sign, and after all four locations it is $-\gamma^4 = -1.209$. Same seed, same shot, every time.*
-
 Legend:
-- `?` location not yet rolled
-- `I` no-fault branch fired (factor $+\gamma$)
-- `Z` phase-flip branch fired (negative weight, factor $-\gamma$)
-- `R` reset branch fired (factor $+\gamma$)
-- vertical marker: the draw $t = u\gamma$ on the slot bar
-- highlighted square: the location whose roll is displayed
+- `?` = location not yet rolled
+- `I` = no-fault branch (factor $+\gamma$)
+- `Z` = phase-flip branch (factor $-\gamma$)
+- `R` = reset branch (factor $+\gamma$)
+- vertical marker = draw $t = u\gamma$ on slot bar
+- highlighted square = location whose roll is shown
 
 ## From weighted shots to answers
 
@@ -301,7 +297,7 @@ print("only one fires   ", round(float(one.mean()), 4))
 
 The error on q1 fires both of its neighbouring checks together (at its rate, $0.2$) or neither; never one alone. That correlation structure is what the [matching](./mwpm), [BP](./bp), and [tensor-network](./tn) decoders exploit.
 
-How does AD fit this picture? Branch by branch: the $Z$ branch never flips a Z-basis record ($Z$ commutes with measuring $Z$), the reset branch flips the record of a qubit that held $\ket 1$, and the no-fault branch flips nothing. Meanwhile all three multiply the shot's weight by $\pm\gamma$. Syndrome visibility and weight are separate ledgers: the syndrome is what the decoder reads, the weight is how much the shot counts when you average its outcome, logical failures included. That weighted failure average is the logical error rate, and it is the subject of [Tutorial 07](./ler).
+How does AD fit this picture? Branch by branch: the $Z$ branch never flips a Z-basis record ($Z$ commutes with measuring $Z$), the reset branch flips the record of a qubit that held $\ket 1$, and the no-fault branch flips nothing. Meanwhile all three multiply the shot's weight by $\pm\gamma$. Syndrome visibility and weight are separate ledgers: the syndrome is what the decoder reads, the weight is how much the shot counts when you average its outcome, logical failures included. That weighted failure average is the logical error rate, scored in [Tutorial 08](./ler).
 
 ## Implementation {#implementation}
 
@@ -448,4 +444,4 @@ print(round(float(recs.mean()), 4))
 
 :::
 
-One channel, one path through the machine: AD's Kraus pair cannot run on a tableau, its signed three-branch menu can, the sampler draws one branch per location at $|q|/\gamma$ and books $\operatorname{sign}(q)\,\gamma$ into the shot's weight, and the weighted mean returns the channel's true expectations at a shot-count cost of $\gamma^{2L}$. Next, those weighted, decoded shots become the one number a code is judged by: the [logical error rate](./ler).
+One channel, one path through the machine: AD's Kraus pair cannot run on a tableau, its signed three-branch menu can, the sampler draws one branch per location at $|q|/\gamma$ and books $\operatorname{sign}(q)\,\gamma$ into the shot's weight, and the weighted mean returns the channel's true expectations at a shot-count cost of $\gamma^{2L}$. That cost is what [Tutorial 07](./stratified) attacks: sort the trajectories by fault count, and the $\gamma^{L}$ factor divides out of the estimator instead of being paid for in shots.

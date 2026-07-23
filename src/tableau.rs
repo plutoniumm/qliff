@@ -259,6 +259,13 @@ fn pick_branch(table: &[(f64, Vec<(u8, u32, u32)>)], thr: f64) -> usize {
 // random, so the frame method can't apply). each chunk owns a tableau (reset per
 // shot) + its own coin/noise RNGs -> parallel, records written shot-major into
 // `out`. shots fully independent (no shared reference) so this scales near-linearly.
+// each noise location draws one branch ~ |weight|/gamma and multiplies the shot's
+// trajectory weight by sign(weight)*gamma (gamma = sum |weight| over the branches);
+// `weights[shot]` gets that product. for a Pauli channel every weight is >= 0 and
+// gamma == 1, so the product stays 1.0 (the plain sampler ignores it); a signed
+// (non-Pauli) channel yields the importance weight the WeightedDetectorSampler uses.
+// branch ops may include OP_RESET (amplitude damping) -- buffered like an R so it
+// shares the round transpose.
 fn batch_chunk(
     instrs: &[(u8, u32, u32, u32)],
     branches: &[Vec<(f64, Vec<(u8, u32, u32)>)>],
@@ -267,40 +274,50 @@ fn batch_chunk(
     coin_seed: u64,
     noise_seed: u64,
     out: &mut [u8],
+    weights: &mut [f64],
 ) {
     let mut t = ColTableau::new(n, Some(coin_seed));
     let mut noise = Rng::new(noise_seed);
     let mut oi = 0usize;
 
-    for _ in 0..chunk_shots {
+    for shot in 0..chunk_shots {
         t.reset_to_zero();
         t.inner.clear_record();
+        let mut wt = 1.0f64;
 
         for &(kind, x, y, z) in instrs {
             match kind {
                 0 => t.apply_gate(x as u8, y as usize, z as usize),
-                1 => match x {
-                    0 => {
-                        out[oi] = t.measure(y as usize, None) as u8;
-                        oi += 1;
-                    }
-                    1 => {
-                        out[oi] = t.mr(y as usize) as u8;
-                        oi += 1;
-                    }
-                    _ => t.reset(y as usize),
-                },
+                // buffer M/MR/R -- their transpose is deferred and shared (one to_row
+                // per syndrome round instead of one per measurement). the outcome is
+                // read from the record after flush, below.
+                1 => t.defer_meas(y as usize, x as u8),
                 2 => {
                     let table = &branches[x as usize];
                     let total: f64 = table.iter().map(|(w, _)| w.abs()).sum();
                     let pick = pick_branch(table, noise.next_f64() * total);
-                    for &(op, a, b) in &table[pick].1 {
-                        t.apply_gate(op, a as usize, b as usize);
+                    let (w, ops) = &table[pick];
+                    wt *= if *w >= 0.0 { total } else { -total };
+                    for &(op, a, b) in ops {
+                        if op == OP_RESET {
+                            t.defer_meas(a as usize, 2);
+                        } else {
+                            t.apply_gate(op, a as usize, b as usize);
+                        }
                     }
                 }
                 _ => {}
             }
         }
+
+        // flush the tail measurements, then copy this shot's record (M/MR only, in
+        // call order) into the shot-major output. R buffers no record bit.
+        t.flush_pending();
+        for &b in t.inner.record.iter() {
+            out[oi] = b as u8;
+            oi += 1;
+        }
+        weights[shot] = wt;
     }
 }
 
@@ -873,6 +890,17 @@ pub struct ColTableau {
     // sign as a bit plane over rows
     signc: Vec<u64>,
     layout: Layout,
+    // deferred-transpose buffer: (qubit, kind) measurements not yet applied, in
+    // call order (kind 0=M, 1=MR, 2=R). syndrome extraction interleaves CX ladders
+    // with MR, so an eager measurement transposes col->row->col once PER MR. we
+    // instead buffer consecutive measurements and flush them with a SINGLE to_row
+    // when a gate finally touches a pending qubit (or an observer reads the state).
+    // legal because every buffered measurement commutes with the intervening gates
+    // (none touch its qubit -- a collision flushes first), so applying them late,
+    // in order, draws the same coins and yields identical records.
+    pend: Vec<(usize, u8)>,
+    // pmask[q] = qubit q has a buffered measurement (fast gate-collision test).
+    pmask: Vec<bool>,
     // row-major measurement engine; also owns the rng + record
     inner: RowTableau,
 }
@@ -1011,15 +1039,100 @@ impl ColTableau {
     }
 
     // ensure Col layout, then apply one gate (for the interleaved sample loop).
+    // flushes buffered measurements first if this gate touches a pending qubit
+    // (the deferred-transpose invariant: a gate may only run once every buffered
+    // measurement on its qubits has been applied).
     fn apply_gate(&mut self, op: u8, a: usize, b: usize) {
+        if !self.pend.is_empty() {
+            let two = matches!(op, OP_CX | OP_CZ | OP_SWAP);
+            if self.pmask[a] || (two && self.pmask[b]) {
+                self.flush_pending();
+            }
+        }
         self.to_col();
         self.gate(op, a, b);
     }
 
+    // buffer a measurement (kind 0=M, 1=MR, 2=R) for deferred transpose. the coin
+    // is drawn -- and the outcome recorded -- later, at flush_pending, in call
+    // order. see the `pend` field comment for why this is exact.
+    fn defer_meas(&mut self, a: usize, kind: u8) {
+        self.pend.push((a, kind));
+        self.pmask[a] = true;
+    }
+
+    // apply every buffered measurement in call order, sharing ONE to_row transpose.
+    // M/MR push their outcome to the record; MR/R reset their qubit to |0>. after
+    // this the buffer is empty and the row engine is authoritative.
+    fn flush_pending(&mut self) {
+        if self.pend.is_empty() {
+            return;
+        }
+        self.to_row();
+        let pend = std::mem::take(&mut self.pend);
+        for (a, kind) in pend {
+            self.pmask[a] = false;
+            match kind {
+                0 => {
+                    self.inner.measure(a, None);
+                }
+                1 => {
+                    self.inner.mr(a);
+                }
+                _ => self.inner.reset(a),
+            }
+        }
+    }
+
     // reset to |0...0> in place; col planes go stale (rebuilt lazily on to_col).
+    // drops any buffered measurements -- a fresh shot starts here, and the caller
+    // (batch_chunk) always flushes into the record before this.
     fn reset_to_zero(&mut self) {
+        for (a, _kind) in self.pend.drain(..) {
+            self.pmask[a] = false;
+        }
         self.inner.reset_to_zero();
         self.layout = Layout::Row;
+    }
+
+    // shared driver behind sample_batch / sample_batch_signed: parallel over
+    // fixed-size shot chunks (BATCH_CHUNK), each with deterministic per-chunk
+    // coin/noise RNGs -> reproducible regardless of core count. no shared reference
+    // (shots independent) -> near-linear. returns (flat shots*num_meas record bytes,
+    // per-shot importance weights, num_meas).
+    fn batch_signed(
+        &self,
+        instrs: &[(u8, u32, u32, u32)],
+        branches: &[Vec<(f64, Vec<(u8, u32, u32)>)>],
+        shots: usize,
+        seed: u64,
+    ) -> (Vec<u8>, Vec<f64>, usize) {
+        let num_meas = instrs.iter().filter(|&&(k, x, _, _)| k == 1 && x != 2).count();
+        if num_meas == 0 || shots == 0 {
+            return (vec![0u8; shots * num_meas], vec![1.0; shots], num_meas);
+        }
+
+        let n = self.nq;
+        let noise_base = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut out = vec![0u8; shots * num_meas];
+        let mut weights = vec![1.0f64; shots];
+        out.par_chunks_mut(BATCH_CHUNK * num_meas)
+            .zip(weights.par_chunks_mut(BATCH_CHUNK))
+            .enumerate()
+            .for_each(|(c, (slice, wslice))| {
+                batch_chunk(
+                    instrs,
+                    branches,
+                    n,
+                    slice.len() / num_meas,
+                    chunk_seed(seed, c as u64),
+                    chunk_seed(noise_base, c as u64),
+                    slice,
+                    wslice,
+                );
+            });
+
+        (out, weights, num_meas)
     }
 }
 
@@ -1042,6 +1155,8 @@ impl ColTableau {
             // (O(n)) so a pure-gate run never pays the row->col transpose. inner is
             // |0...0> too (rebuilt from the planes on the first measurement).
             layout: Layout::Col,
+            pend: Vec::new(),
+            pmask: vec![false; n],
             inner: RowTableau::new(n, seed),
         };
         // |0...0>: destab j = X_j -> xc plane j, bit at row j;
@@ -1059,50 +1174,42 @@ impl ColTableau {
         self.nq
     }
 
-    // 1- and 2-qubit gates: ensure Col layout, then the shared `gate` core.
+    // 1- and 2-qubit gates: flush any pending measurement on the target(s), ensure
+    // Col layout, then the shared `gate` core (all via apply_gate).
     fn h(&mut self, a: usize) {
-        self.to_col();
-        self.gate(0, a, 0);
+        self.apply_gate(0, a, 0);
     }
 
     fn s(&mut self, a: usize) {
-        self.to_col();
-        self.gate(1, a, 0);
+        self.apply_gate(1, a, 0);
     }
 
     fn s_dag(&mut self, a: usize) {
-        self.to_col();
-        self.gate(2, a, 0);
+        self.apply_gate(2, a, 0);
     }
 
     fn x(&mut self, a: usize) {
-        self.to_col();
-        self.gate(3, a, 0);
+        self.apply_gate(3, a, 0);
     }
 
     fn y(&mut self, a: usize) {
-        self.to_col();
-        self.gate(4, a, 0);
+        self.apply_gate(4, a, 0);
     }
 
     fn z(&mut self, a: usize) {
-        self.to_col();
-        self.gate(5, a, 0);
+        self.apply_gate(5, a, 0);
     }
 
     fn cx(&mut self, a: usize, b: usize) {
-        self.to_col();
-        self.gate(6, a, b);
+        self.apply_gate(6, a, b);
     }
 
     fn cz(&mut self, a: usize, b: usize) {
-        self.to_col();
-        self.gate(7, a, b);
+        self.apply_gate(7, a, b);
     }
 
     fn swap(&mut self, a: usize, b: usize) {
-        self.to_col();
-        self.gate(8, a, b);
+        self.apply_gate(8, a, b);
     }
 
     // apply a compiled (op, a, b) stream in one call: one to_col for the whole
@@ -1110,6 +1217,9 @@ impl ColTableau {
     // gate() core -- it folds back into this hot loop with identical codegen to an
     // inlined match, so there is a single source for the col-major gate math.
     fn run(&mut self, ops: Vec<(u8, u32, u32)>) {
+        if !self.pend.is_empty() {
+            self.flush_pending();
+        }
         self.to_col();
         for (op, a, b) in ops {
             self.gate(op, a as usize, b as usize);
@@ -1122,8 +1232,9 @@ impl ColTableau {
     //   kind 1 = measure(sub=x: 0=M 1=MR 2=R, qubit=y) -- M/MR push a record bit
     //   kind 2 = noise(table=x): pick one branch ~ |weight|, apply its ops
     // branches[i] = [(weight, [(op,a,b)..])..] (precompiled in Python). one reused
-    // tableau, reset per shot. returns (flat shots*num_meas bytes, num_meas).
-    // non-Pauli ops never reach here (Python falls back), so this stays Pauli-only.
+    // tableau, reset per shot. returns (flat shots*num_meas bytes, num_meas). Pauli
+    // channels only carry positive weights so the per-shot sign is 1 and is dropped
+    // here; sample_batch_signed keeps it for the non-Pauli path.
     fn sample_batch(
         &self,
         instrs: Vec<(u8, u32, u32, u32)>,
@@ -1131,33 +1242,26 @@ impl ColTableau {
         shots: usize,
         seed: u64,
     ) -> (Vec<u8>, usize) {
-        // parallel over fixed-size shot chunks (BATCH_CHUNK): each owns a tableau +
-        // deterministic per-chunk coin/noise RNGs -> reproducible regardless of core
-        // count. no shared reference (shots independent) -> near-linear. flat
-        // shots*num_meas byte buffer out (Python views it as a uint8 array).
-        let num_meas = instrs.iter().filter(|&&(k, x, _, _)| k == 1 && x != 2).count();
-        if num_meas == 0 || shots == 0 {
-            return (vec![0u8; shots * num_meas], num_meas);
-        }
-
-        let n = self.nq;
-        let noise_base = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut out = vec![0u8; shots * num_meas];
-        out.par_chunks_mut(BATCH_CHUNK * num_meas)
-            .enumerate()
-            .for_each(|(c, slice)| {
-                batch_chunk(
-                    &instrs,
-                    &branches,
-                    n,
-                    slice.len() / num_meas,
-                    chunk_seed(seed, c as u64),
-                    chunk_seed(noise_base, c as u64),
-                    slice,
-                );
-            });
+        let (out, _weights, num_meas) = self.batch_signed(&instrs, &branches, shots, seed);
 
         (out, num_meas)
+    }
+
+    // signed batched trajectory sampler for NON-Pauli noise (coherent rotations,
+    // amplitude damping). same replay as sample_batch but also returns a per-shot
+    // importance weight (product of sign(weight)*gamma over the drawn branches).
+    // branch op streams may contain OP_RESET (amplitude damping). the caller
+    // (WeightedDetectorSampler) folds the records against the noiseless reference and
+    // keeps the weights. returns (flat shots*num_meas bytes, per-shot weights,
+    // num_meas).
+    fn sample_batch_signed(
+        &self,
+        instrs: Vec<(u8, u32, u32, u32)>,
+        branches: Vec<Vec<(f64, Vec<(u8, u32, u32)>)>>,
+        shots: usize,
+        seed: u64,
+    ) -> (Vec<u8>, Vec<f64>, usize) {
+        self.batch_signed(&instrs, &branches, shots, seed)
     }
 
     // noiseless reference run for the frame sampler: the deterministic measurement
@@ -1284,16 +1388,19 @@ impl ColTableau {
 
     #[pyo3(signature = (a, force=None))]
     fn measure(&mut self, a: usize, force: Option<bool>) -> bool {
+        self.flush_pending();
         self.to_row();
         self.inner.measure(a, force)
     }
 
     fn mr(&mut self, a: usize) -> bool {
+        self.flush_pending();
         self.to_row();
         self.inner.mr(a)
     }
 
     fn reset(&mut self, a: usize) {
+        self.flush_pending();
         self.to_row();
         self.inner.reset(a);
     }
@@ -1308,22 +1415,26 @@ impl ColTableau {
     }
 
     fn stabilizers(&mut self) -> Vec<(bool, Vec<u8>, Vec<u8>)> {
+        self.flush_pending();
         self.to_row();
         self.inner.stabilizers()
     }
 
     fn destabilizers(&mut self) -> Vec<(bool, Vec<u8>, Vec<u8>)> {
+        self.flush_pending();
         self.to_row();
         self.inner.destabilizers()
     }
 
     fn expectation(&mut self, px: Vec<u8>, pz: Vec<u8>) -> i8 {
+        self.flush_pending();
         self.to_row();
         self.inner.expectation(&px, &pz)
     }
 
     #[pyo3(signature = (px, pz, force=None))]
     fn measure_pauli(&mut self, px: Vec<u8>, pz: Vec<u8>, force: Option<bool>) -> (bool, bool) {
+        self.flush_pending();
         self.to_row();
         self.inner.measure_pauli(px, pz, force)
     }
@@ -1339,7 +1450,57 @@ impl ColTableau {
 
 #[cfg(test)]
 mod tests {
-    use super::word_g;
+    use super::{word_g, ColTableau, OP_CX, OP_H};
+
+    // Deferred measurement (defer_meas + flush_pending, the batch_chunk path) must
+    // draw the same coins and record the same bits as eager measurement, for the
+    // same seed -- the pure-optimisation guarantee of the deferred transpose. The
+    // circuit interleaves gates with measurements AND defers a measurement past a
+    // gate that does NOT touch its qubit (MR on 1,2 held across CX(0,3)), which is
+    // exactly the reordering the optimisation relies on being exact.
+    #[test]
+    fn deferred_matches_eager() {
+        // ops: (0,op,a,b) gate, (1,sub,q,_) measure sub 0=M 1=MR 2=R.
+        let ops: [(u8, u8, usize, usize); 9] = [
+            (0, OP_H, 0, 0),
+            (0, OP_H, 3, 0),
+            (0, OP_CX, 0, 1),
+            (0, OP_CX, 3, 2),
+            (1, 1, 1, 0), // MR(1)
+            (1, 1, 2, 0), // MR(2)
+            (0, OP_CX, 0, 3), // touches 0,3 -- NOT 1 or 2, so the two MRs stay buffered
+            (1, 0, 0, 0), // M(0)
+            (1, 0, 3, 0), // M(3)
+        ];
+
+        let mut eager = ColTableau::new(4, Some(0xC0FFEE));
+        let mut lazy = ColTableau::new(4, Some(0xC0FFEE));
+        for &(kind, sub, a, b) in ops.iter() {
+            if kind == 0 {
+                eager.apply_gate(sub, a, b);
+                lazy.apply_gate(sub, a, b);
+            } else {
+                // eager: measure now (each call flushes, transposes, records)
+                match sub {
+                    0 => {
+                        eager.measure(a, None);
+                    }
+                    1 => {
+                        eager.mr(a);
+                    }
+                    _ => eager.reset(a),
+                }
+                // lazy: buffer, transpose shared at the next flush
+                lazy.defer_meas(a, sub);
+            }
+        }
+        lazy.flush_pending();
+
+        assert_eq!(
+            eager.inner.record, lazy.inner.record,
+            "deferred record must byte-match eager for the same seed"
+        );
+    }
 
     // Scalar reference for the phase g = power of i when (x1,z1) * (x2,z2).
     // Encoding I=(0,0) X=(1,0) Z=(0,1) Y=(1,1); result in {-1, 0, +1}:

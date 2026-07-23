@@ -3,9 +3,7 @@ title: Belief Propagation
 outline: 2
 ---
 
-# Belief Propagation <Badge type="info" text="Tutorial 03 of 7" />
-
-> Let qubits and checks exchange probabilities until they agree on the likeliest error.
+# Belief Propagation <Badge type="info" text="Tutorial 03 of 10" />
 
 <script setup>
 import TannerDemo from '../_tut/bp/TannerDemo.svelte'
@@ -42,14 +40,12 @@ Click a detector to "light" it: the lit pattern is a **syndrome**, the only thin
 
 <SvelteIsland :component="TannerDemo" />
 
-*A small Tanner graph. Squares are detectors (parity checks); circles are error mechanisms. Click detectors to set the syndrome; the list below ranks every consistent error set by its probability given that syndrome, likeliest first. Hover a node to highlight its edges.*
-
 Legend:
-- variable node = error mechanism (circle)
-- check node = detector (square)
-- lit check (syndrome bit = 1)
-- edge: mechanism flips detector
-- highlighted row = likeliest explanation (what a decoder should return)
+- circle = error mechanism
+- square = detector
+- lit square = syndrome bit 1
+- edge = mechanism flips detector
+- highlighted row = likeliest explanation
 
 Two things to notice. Light all three detectors and the top of the list becomes a *tie*: two explanations with the same weight, hence the same probability. That is **degeneracy**, and it returns later as the thing that traps BP. Second, the brute-force ranking only works because this toy has 32 candidates; a real code has thousands of mechanisms and $2^{\text{thousands}}$ subsets. BP exists to find the same winner without enumerating them.
 
@@ -85,11 +81,9 @@ print(np.round(np.log((1 - p) / p), 3))
 
 <SvelteIsland :component="PriorGauge" />
 
-*Drag the prior $p$. The gauge shows the resulting prior LLR $\ell = \log\frac{1-p}{p}$ in nats, the number qliff seeds BP with per mechanism.*
-
 Legend:
-- $\ell < 0$: favours error
-- $\ell > 0$: favours no error
+- $\ell < 0$ = favours error
+- $\ell > 0$ = favours no error
 
 ::: tip Posterior, the other direction
 After gossiping, BP has a *posterior* LLR per mechanism. Convert back with $p = \tfrac{1}{1+e^{\ell}}$. The hard decision is a threshold at zero: declare an error whenever the posterior LLR goes **negative**.
@@ -136,13 +130,11 @@ Take an unlit detector $s_c = 0$ with three neighbours sending in messages $m_{1
 
 <SvelteIsland :component="DanceDemo" />
 
-*Sum-product BP computed live on a 7-bit repetition code. Dots are live messages, sized and coloured (heat) by magnitude. Belief rings on each mechanism track its posterior P(error); rings/labels turn red once a mechanism is called an error.*
-
 Legend:
-- live message (size/heat = |LLR|)
+- dot = live message (size/heat = |LLR|)
 - belief ring = posterior P(error)
-- true error mechanism
-- called an error (hard decision)
+- cyan ring = true error mechanism
+- red ring/label = called an error
 
 Iteration **0** shows the priors alone: every belief is the same positive number. As messages flow, the detectors next to the true error report strong evidence of a flip, and the beliefs of the mechanisms between two lit detectors collapse toward error.
 
@@ -170,12 +162,10 @@ A mechanism with prior $p=0.06$ (so $\ell = \log\frac{0.94}{0.06} = 2.752$) sits
 
 <SvelteIsland :component="BeliefsDemo" />
 
-*Posterior beliefs at the current iteration. Bars grow left (red) toward 'error', right toward 'no error'; intensity tracks confidence. The 'true' mechanism is marked in cyan.*
-
 Legend:
 - bar left = error ($\ell < 0$)
 - bar right = no error ($\ell > 0$)
-- true mechanism (cyan label)
+- cyan label = true mechanism
 
 The recovered mechanism vector then maps through the observable matrix ($\text{obs} = O\,\hat{e} \bmod 2$) to say which *logical* observables flipped, which is the output qliff hands back. Try moving the true error around in the panel above; for the repetition code, BP recovers it every time.
 
@@ -193,12 +183,10 @@ Here's a tiny hand-built code that traps it. Detector $d_0$ touches all four mec
 
 <SvelteIsland :component="StuckDemo" />
 
-*A degenerate trap. Step the iteration: the hard decision flips between e0,e1 and nothing on every round, and the posteriors for e0 and e1 stay locked together: BP never decides. (The run is computed live and does not converge; this is not an animation loop.)*
-
 Legend:
-- lit check
-- unsatisfied check (residual = 1)
-- oscillating belief ring
+- lit check = syndrome bit 1
+- unsatisfied check = residual 1
+- oscillating belief ring = BP never decides
 
 ::: warning The symmetric trap
 Notice that $e_0$ and $e_1$ always carry the *identical* posterior, and that it keeps flipping sign. BP has split its belief symmetrically between two indistinguishable stories and can't break the tie. No number of extra iterations helps. This is the failure mode that defeats plain BP on practical quantum codes (colour codes, surface codes with short cycles).

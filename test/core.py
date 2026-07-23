@@ -8,10 +8,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from MDR import Exam, Question, load
 
+import numpy as np
+
 import qliff
 from qliff import Circuit, PauliString, Simulator, fidelity
+from qliff._core import ColTableau
 from qliff.noise import BitFlip
 from qliff.pauli import canonicalize, parse_signed
+from qliff.simulator import GATE_OPCODE
 
 
 def _teleport(prepare, seed):
@@ -717,6 +721,127 @@ class CircuitTests(Question):
             c.run()
 
 
+# opcodes for the raw ColTableau batch instruction stream (see ColTableau::run)
+_X = GATE_OPCODE["X"]
+_H = GATE_OPCODE["H"]
+_CX = GATE_OPCODE["CX"]
+
+
+class BatchSamplerTests(Question):
+    """
+    The deferred-transpose batch sampler (ColTableau.sample_batch /
+    sample_batch_signed): consecutive measurements share one col<->row transpose,
+    flushed only when a gate touches a buffered qubit. These lock the pure-
+    optimisation guarantee -- deferring must not change any recorded bit.
+    """
+
+    def test_deferred_collision_flushes_before_gate(self):
+        """
+        A gate on a qubit with a buffered measurement flushes it first: X;MR resets
+        the qubit, so the following CX sees |0> and cannot flip its target.
+        """
+        # X(0); MR(0)=1 (resets 0 to |0>); CX(0,1) (0 is |0> -> no-op); M(0); M(1)
+        instrs = [
+            (0, _X, 0, 0),
+            (1, 1, 0, 0),
+            (0, _CX, 0, 1),
+            (1, 0, 0, 0),
+            (1, 0, 1, 0),
+        ]
+        core = ColTableau(2)
+        buf, num_meas = core.sample_batch(instrs, [], 16, 0)
+        rows = np.frombuffer(buf, dtype=np.uint8).reshape(16, num_meas)
+
+        self.assertEqual(num_meas, 3, msg="MR + two M -> three records")
+
+        for row in rows:
+            self.assertEqual(
+                row.tolist(), [1, 0, 0], msg="collision flush must reset before the CX"
+            )
+
+    def test_deferred_measurements_held_across_gate(self):
+        """
+        Measurements on other qubits stay buffered across a non-touching gate and
+        flush in call order, giving the exact record the eager order would.
+        """
+        # X(0); X(1); MR(0)=1; MR(1)=1; H(2);H(2)=I (buffer survives); M(0);M(1);M(2)
+        instrs = [
+            (0, _X, 0, 0),
+            (0, _X, 1, 0),
+            (1, 1, 0, 0),
+            (1, 1, 1, 0),
+            (0, _H, 2, 0),
+            (0, _H, 2, 0),
+            (1, 0, 0, 0),
+            (1, 0, 1, 0),
+            (1, 0, 2, 0),
+        ]
+        core = ColTableau(3)
+        buf, num_meas = core.sample_batch(instrs, [], 8, 123)
+        rows = np.frombuffer(buf, dtype=np.uint8).reshape(8, num_meas)
+
+        for row in rows:
+            self.assertEqual(
+                row.tolist(),
+                [1, 1, 0, 0, 0],
+                msg="buffered MRs must reset before the trailing M reads them",
+            )
+
+    def test_sample_batch_reproducible(self):
+        """
+        The batched sampler is deterministic in its seed: identical bytes twice.
+        """
+        instrs = [
+            (0, _H, 0, 0),
+            (0, _CX, 0, 1),
+            (1, 1, 0, 0),
+            (1, 0, 1, 0),
+        ]
+        core = ColTableau(2)
+        a, _ = core.sample_batch(instrs, [], 500, 20260723)
+        b, _ = core.sample_batch(instrs, [], 500, 20260723)
+
+        self.assertEqual(bytes(a), bytes(b), msg="same seed must give the same bytes")
+
+    def test_signed_reset_branch_and_sign(self):
+        """
+        sample_batch_signed handles OP_RESET branches and carries a signed weight:
+        a hand-built {I, -Z, R} table resets the qubit on its R branch and yields
+        both signs, mean weight ~ sum(signed weights).
+        """
+        # X(0) -> |1>, then a signed 1Q channel, then M(0). branch weights sum to 0.9
+        # in magnitude 1.1 (gamma); R (opcode 9) resets |1> -> |0>.
+        table = [
+            (0.9, []),
+            (-0.1, [(GATE_OPCODE["Z"], 0, 0)]),
+            (0.1, [(9, 0, 0)]),
+        ]
+        instrs = [
+            (0, _X, 0, 0),
+            (2, 0, 0, 0),
+            (1, 0, 0, 0),
+        ]
+        core = ColTableau(1)
+        buf, weights, num_meas = core.sample_batch_signed(instrs, [table], 20000, 5)
+        recs = np.frombuffer(buf, dtype=np.uint8).reshape(20000, num_meas)
+        w = np.asarray(weights)
+
+        self.assertEqual(num_meas, 1, msg="one measurement record")
+
+        self.assertTrue(np.any(w < 0.0), msg="the -Z branch must make some weights < 0")
+
+        self.assertTrue(
+            np.all(np.isclose(np.abs(w), 1.1)), msg="every |weight| is gamma = 1.1"
+        )
+
+        # R resets |1> -> |0>, so some shots read 0 despite the leading X(0)
+        self.assertTrue(np.any(recs[:, 0] == 0), msg="the reset branch must zero q0")
+
+        self.assertLess(
+            abs(float(w.mean()) - 0.9), 0.05, msg=f"mean weight {w.mean():.3f} ~ 0.9"
+        )
+
+
 if __name__ == "__main__":
     rc = 0
     rc |= Exam("Smoke", "Phase 1 build + import smoke test", "smoke.md").run(
@@ -742,4 +867,9 @@ if __name__ == "__main__":
     rc |= Exam("Circuit", "Circuit IR build and run", "circuit.md").run(
         load(CircuitTests)
     )
+    rc |= Exam(
+        "BatchSampler",
+        "Deferred-transpose batched trajectory sampler",
+        "batch_sampler.md",
+    ).run(load(BatchSamplerTests))
     sys.exit(rc)

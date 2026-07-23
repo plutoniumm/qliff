@@ -78,14 +78,17 @@ class CoherentDecoder(TensorNetworkDecoder):
     flip; the network contracts to the (real part of the) total weight per logical
     class and argmaxes it. Handles non-Pauli channels (coherent RZ/RX, amplitude
     damping) that no DEM decoder can represent; on Pauli-only circuits it reproduces
-    "mld" exactly. Registered as "coherent" via make_circuit_decoder in decoder.py.
+    "mld" exactly. Passing `max_bond=chi` caps the contraction's bond dimension via
+    truncated SVD, trading exactness for a coarser contraction; `max_bond=None`
+    (default) is exact. Registered as "coherent" via make_circuit_decoder in
+    decoder.py, which is also where "tn"/"mld" land on non-Pauli noise.
     """
 
-    def __init__(self, circuit: Circuit):
+    def __init__(self, circuit: Circuit, max_bond: int | None = None):
         self.circuit = circuit
         self.num_detectors = len(circuit.detectors)
         self.num_observables = len(circuit.observables)
-        self.max_bond = None
+        self.max_bond = max_bond
 
         # one tensor per noise location, plus per-detector / per-observable
         # incidence (which locations touch each).

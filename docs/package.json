@@ -1,6 +1,6 @@
 {
   "name": "qliff",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "private": true,
   "description": "Documentation qliff: Aaronson-Gottesman Tableu based quantum circuit simulator",
   "type": "module",
@@ -8,7 +8,7 @@
     "dev": "vitepress dev",
     "build": "vitepress build",
     "preview": "vitepress preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check": "svelte-chectk --tsconfig ./tsconfig.json",
     "interact": "node test/interact.mjs",
     "deploy": "npx -y gh-pages -d .vitepress/dist -t"
   },

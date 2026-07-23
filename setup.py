@@ -22,7 +22,7 @@ with open("README.md", encoding="utf-8") as fh:
 
 setup(
     name="qliff",
-    version="0.0.1",
+    version="0.2.0",
     description=(
         "Clifford + noisy stabilizer simulator: noise-free and noisy "
         "(importance-sampled) stabilizer simulation with a native core."
@@ -43,7 +43,6 @@ setup(
         "tableau",
     ],
     classifiers=[
-        "Development Status :: 4 - Beta",
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
         "Programming Language :: Rust",

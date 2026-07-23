@@ -3,9 +3,7 @@ title: Tensor-Network Decoder
 outline: 2
 ---
 
-# Tensor-Network Decoder <Badge type="info" text="Tutorial 04 of 7" />
-
-> Sum over every error at once by contracting a network of small tensors: exact maximum likelihood.
+# Tensor-Network Decoder <Badge type="info" text="Tutorial 04 of 10" />
 
 <script setup>
 import DegeneracyPlay from '../_tut/tn/DegeneracyPlay.svelte'
@@ -40,13 +38,10 @@ Take a 3-qubit repetition code. Two parity checks compare neighbouring qubits, a
 
 <SvelteIsland :component="DegeneracyPlay" />
 
-*Every syndrome-consistent error pattern, with its probability and its logical class. Uncheck a row to drop it from the sum; the bars at the bottom are the running per-class totals, and the winner is their argmax, which is what the tensor network computes.*
-
 Legend:
 
-- class I: no logical flip
-- class L: logical flip
-- checkbox: include the row in the running sum
+- class I = no logical flip
+- class L = logical flip
 
 ::: tip The summation IS the decoder
 A decoder that only inspects one error throws away the weight of every other error in the same class. Summing it back is the whole job. On a 2-D surface code, where a class can hold exponentially many medium-weight errors, that sum is the difference between a working decoder and a failing one.
@@ -62,13 +57,11 @@ A tensor is a multi-index array; each index is a *leg*. A vector has one leg, a 
 
 <SvelteIsland :component="TensorPlay" />
 
-*Contracting two 2x2 tensors over their shared leg k. Hover a result cell to see which products are summed. This single rule (sum over shared legs) is the only operation the decoder uses.*
-
 Legend:
 
-- row index i (open leg of A)
-- column index j (open leg of B)
-- cell value (warmer = larger)
+- i = row index (open leg of A)
+- j = column index (open leg of B)
+- warmer cell = larger value
 
 Written as an equation, contracting tensors $A$ and $B$ over a shared leg $k$ is
 
@@ -175,16 +168,14 @@ Now pick any assignment of the nine bits and multiply the six tensor entries it 
 
 <SvelteIsland :component="FactorGraphPlay" />
 
-*The network above, drawn live. It opens on the running example: 3 data qubits, p = 0.1, syndrome (1, 0). Click a check (square) to re-pin it to the other syndrome bit; mechanisms touching a fired check are highlighted. Slide the distance up to grow the chain.*
-
 Legend:
 
-- biased-copy tensor (mechanism, carries [1-p, p])
-- parity tensor (check, pinned to its syndrome bit)
-- fired check (syndrome bit = 1)
-- observable parity (triangle, open leg = predicted flip)
-- leg (shared index)
-- leg touching a fired check (highlighted)
+- biased-copy tensor = mechanism, carries [1-p, p]
+- parity tensor = check, pinned to its syndrome bit
+- fired check = syndrome bit 1
+- observable parity (triangle) = open leg, predicted flip
+- leg = shared index
+- highlighted leg = touches a fired check
 
 ## Contract it by hand
 
@@ -226,13 +217,10 @@ where $\partial e|_d$ is the parity that pattern $e$ throws on check $d$. The co
 
 <SvelteIsland :component="ContractionPlay" />
 
-*The same network, contracted by machine. It opens on the running example; scrub through the merges. The decoder picks a greedy order (cheapest merge first) rather than the left-to-right sweep, and lands on the same weights: 9.000e-3 and 8.100e-2. Re-pin the checks or grow the chain to decode other shots.*
-
 Legend:
 
-- class I weight (no logical flip)
-- class L weight (logical flip)
-- fired check button
+- class I weight = no logical flip
+- class L weight = logical flip
 
 ::: tip This is the qliff decoder
 `MaxLikelihoodDecoder` in `qliff/qec/tn.py` runs this loop: build the copy and observable tensors once per error model, swap in the pinned check tensors per shot, contract pairwise, argmax the final tensor. Pairwise `tensordot` merges also dodge the 52-subscript ceiling of a single whole-network einsum.
@@ -257,13 +245,11 @@ The smallest achievable "widest cut" over all merge orders is the network's **tr
 
 <SvelteIsland :component="CostChart" />
 
-*Cost on the repetition chain: the largest intermediate (purple) stays flat as the chain grows, while brute-force enumeration (grey) doubles with every added mechanism. Log scale. For a 2-D code the purple curve would climb exponentially too, with exponent ~d instead of #mechanisms.*
-
 Legend:
 
-- brute force: enumerate all 2^(#mechanisms) errors
-- TN cost: largest intermediate 2^k
-- inspected distance d
+- brute force = all 2^(#mechanisms) errors
+- TN cost = largest intermediate 2^k
+- inspected distance = d
 
 So exact MLD is affordable at small distance and hopeless at large distance, unless the intermediates can be kept small without abandoning the sum. They can, approximately.
 
@@ -284,13 +270,11 @@ At low noise the spectrum decays fast: the no-error branch and a few light pertu
 
 <SvelteIsland :component="TruncationPlay" />
 
-*One 8x8 bond and its singular values. Bars past the χ cutoff are dropped; the readout prints the truncation error ε(χ). Slide χ up and the error falls; at full χ nothing is dropped and the result is the exact contraction.*
-
 Legend:
 
-- kept singular value (k ≤ χ)
-- dropped singular value (k > χ)
-- χ cutoff (bond dimension)
+- kept singular value = k <= χ
+- dropped singular value = k > χ
+- χ cutoff = bond dimension
 
 ::: details Worked example: which σₖ of an 8x8 bond survive χ = 2?
 

@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 const isDev = process.env.NODE_ENV === 'development';
+const base = isDev ? '/' : '/qliff/';
 
 export default defineConfig({
-  base: isDev ? '/' : '/qliff/',
+  base,
   // Drop a .nojekyll into the build so GitHub Pages serves the output verbatim
   // (Jekyll otherwise skips files/dirs starting with `_`). Written on every build
   // so a fresh `vitepress build` can't wipe it; `gh-pages -t` then publishes it.
@@ -16,6 +17,11 @@ export default defineConfig({
   },
   title: "qliff",
   description: "Clifford + noisy stabilizer simulator: a native Rust core with a stim-style uppercase Python API.",
+  head: [
+    // Favicon. icon.svg lives in docs/public, served at <base>/icon.svg. VitePress
+    // does not base-prefix head hrefs, so prepend `base` (which ends in '/').
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: base + 'icon.svg' }],
+  ],
   markdown: {
     // Inline/display math renders via markdown-it-mathjax3 (MathJax). Custom
     // physics macros so tutorial prose can write $\ket\psi$ in plain markdown,
@@ -36,6 +42,8 @@ export default defineConfig({
   ignoreDeadLinks: [/^\/tests\//],
   themeConfig: {
     // https://vitepress.dev/reference/default-theme-config
+    // themeConfig.logo IS base-prefixed by VitePress, so a site-root path is right.
+    logo: '/icon.svg',
     nav: [
       { text: 'Home', link: '/' },
       { text: 'Getting Started', link: '/getting-started' },
@@ -69,7 +77,7 @@ export default defineConfig({
       {
         // Interactive explainers: Svelte islands mounted into the markdown routes
         // under docs/tutorials/ (source in docs/_tut/). The sidebar order also
-        // drives VitePress' native prev/next pager across the seven pages.
+        // drives VitePress' native prev/next pager across the ten pages.
         text: 'Tutorials',
         items: [
           { text: '01 · Gates & CX', link: '/tutorials/gates' },
@@ -78,7 +86,10 @@ export default defineConfig({
           { text: '04 · Tensor networks', link: '/tutorials/tn' },
           { text: '05 · Coherent noise', link: '/tutorials/coherent' },
           { text: '06 · Noise sampling', link: '/tutorials/noise' },
-          { text: '07 · Logical error rate', link: '/tutorials/ler' },
+          { text: '07 · Stratified sampling', link: '/tutorials/stratified' },
+          { text: '08 · Logical error rate', link: '/tutorials/ler' },
+          { text: '09 · Optimisations: Physics', link: '/tutorials/optim-physics' },
+          { text: '10 · Optimisations: Memory', link: '/tutorials/optim-memory' },
         ],
       },
       {

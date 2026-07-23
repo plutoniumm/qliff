@@ -1,6 +1,6 @@
 [package]
 name = "qliff"
-version = "0.0.1"
+version = "0.2.0"
 edition = "2021"
 description = "Clifford + noisy stabilizer simulator (native core)"
 license = "MIT"

@@ -104,7 +104,8 @@ class DetectorErrorModel:
     """
     First-order detector error model. Each Pauli fault branch propagates
     sign-free to the circuit end to find the detectors/observables it flips;
-    equal-signature branches merge as independent errors. Pauli noise only;
+    equal-signature branches SUM within a channel (its branches are mutually
+    exclusive) and merge as independent errors across channels. Pauli noise only;
     exporters feed MWPM / BP / ML (no decoder bundled).
     """
 
@@ -119,6 +120,13 @@ class DetectorErrorModel:
             channel = make_channel(name, arg)
             if not channel.is_pauli:
                 raise ValueError(f"DEM requires Pauli noise; {name} is not Pauli")
+            # Branches of ONE channel are MUTUALLY EXCLUSIVE -- exactly one fires --
+            # so two branches with the same signature ADD. Only across channels
+            # (independent noise locations) do equal signatures combine as
+            # independent errors via _combine. Merging within a channel that way
+            # undercounts by O(p^2): DEPOLARIZE1's X and Y branches both flip a
+            # Z-check, giving 2p/3 - 2p^2/9 instead of 2p/3.
+            local: dict = {}
             for w, ops in channel.branches(targets)[1:]:
                 if w == 0.0:
                     continue
@@ -136,6 +144,9 @@ class DetectorErrorModel:
                 if not dets and not obs:
                     continue
                 key = (dets, obs)
+                local[key] = local.get(key, 0.0) + w
+
+            for key, w in local.items():
                 merged[key] = _combine(merged.get(key, 0.0), w)
         self.mechanisms = [(p, dets, obs) for (dets, obs), p in merged.items()]
 

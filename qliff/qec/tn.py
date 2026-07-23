@@ -23,15 +23,25 @@ from .dem import DetectorErrorModel
 #
 # BOND TRUNCATION (max_bond): exact contraction cost scales with treewidth -- an
 # intermediate tensor of k legs holds 2^k entries -- so it blows up past small
-# distances. `contract(..., max_bond=chi)` caps that: before merging a pair whose
-# SHARED bond (the product of its common legs, dim 2^s) exceeds chi, the bond is
-# compressed by a truncated SVD that keeps only its chi largest singular values
-# (Bravyi-Suchara-Vargo boundary contraction, done pairwise instead of as a full
-# boundary MPS). Splitting a tensor as A=U.sqrt(S) and B=sqrt(S).Vh and discarding
-# the tail singular values factors the bond through a rank-chi waist, so the merged
-# tensor carries one bond of dim<=chi where it had 2^s, bounding intermediate size.
-# As chi -> infinity no singular value is dropped and the result is bit-for-bit the
-# exact contraction; at finite chi it is the best low-rank approximation of the cut.
+# distances. `contract(..., max_bond=chi)` is the standard remedy for that: before
+# merging a pair whose SHARED bond (the product of its common legs, dim 2^s) exceeds
+# chi, the bond is compressed by a truncated SVD that keeps only its chi largest
+# singular values (Bravyi-Suchara-Vargo boundary contraction, done pairwise instead of
+# a full boundary MPS). Splitting a tensor as A=U.sqrt(S) and B=sqrt(S).Vh and
+# discarding the tail singular values factors the bond through a rank-chi waist, so
+# the pair merges through a dim<=chi waist where it had 2^s. As chi -> infinity no
+# singular value is dropped and the result is bit-for-bit the exact contraction; at
+# finite chi each merge is the best rank-chi approximation of its cut.
+#
+# WHAT IT DOES NOT DO (yet): the PAIRWISE form compresses a bond by SVD-ing the
+# pair's product, which it materializes first, and the merged tensor's legs are the
+# two operands' free legs either way -- so a merge's result size is the same with and
+# without chi. Today max_bond is therefore an ACCURACY dial (it costs one extra SVD
+# per compressed merge, it does not save memory or time). Bounding the peak
+# intermediate needs the full boundary-MPS ordering -- compress the boundary BETWEEN
+# merges, keeping the state itself factored -- which the greedy pairwise order here
+# does not do. Treat chi as "how much of each cut to keep", not as a memory escape
+# hatch for large lattices.
 
 
 class Tensor:
@@ -116,7 +126,8 @@ def contract(
     legs, keeping intermediates small. Order never changes the value, only cost.
     Scalars (rank-0 tensors) fold in as a multiplicative factor. With `max_bond`
     set, a pair's shared bond is truncated to that bond dimension by SVD before
-    merging, bounding intermediate size (exact as max_bond -> infinity).
+    merging, so each merge is a rank-max_bond approximation (exact as max_bond ->
+    infinity); see the header on what that does and does not bound.
     """
     scale = 1.0
     work: list[Tensor] = []
@@ -295,10 +306,11 @@ class MaxLikelihoodDecoder(TensorNetworkDecoder):
     DetectorErrorModel: the Pauli special case of TensorNetworkDecoder, where every
     source is a mechanism carrying a real probability [1-p, p]. Optimal on the DEM
     (>= MWPM/BP+OSD accuracy); cost grows with the network's treewidth, so it is the
-    reference / small-to-mid-distance decoder. Registered as "mld" (and "tn").
-    Passing `max_bond=chi` caps the contraction's bond dimension via truncated SVD so
-    it scales past small distances; `max_bond=None` (default) is the exact
-    contraction.
+    reference / small-to-mid-distance decoder. Passing `max_bond=chi` caps the
+    contraction's bond dimension via truncated SVD, trading exactness for a coarser
+    contraction; `max_bond=None` (default) is exact. Registered twice in decoder.py:
+    as "mld", which pins max_bond to None and stays the exact reference, and as "tn",
+    which forwards the caller's `max_bond`.
     """
 
     def __init__(self, dem: DetectorErrorModel, max_bond: int | None = None):
