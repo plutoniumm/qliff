@@ -5,7 +5,7 @@
   // series; a draw hook adds the dashed vertical p_th marker, the dotted break-
   // even diagonal LER = p, and a d= label at the left edge of each curve.
   import { C, withAlpha } from "$lib/colors";
-  import LinePlot, { type DrawKit, type PlotSeries } from "$shared/LinePlot.svelte";
+  import LinePlot, { type DrawKit, type PlotSeries } from "$lib/LinePlot.svelte";
 
   export interface Curve {
     d: number;

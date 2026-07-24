@@ -6,7 +6,7 @@
   // between the two views of the SAME measured runs (MEASURED in model.ts). No
   // $effect writes state; the curve is a pure $derived.
   import { C, withAlpha } from "$lib/colors";
-  import LinePlot, { type DrawKit, type PlotSeries } from "$shared/LinePlot.svelte";
+  import LinePlot, { type DrawKit, type PlotSeries } from "$lib/LinePlot.svelte";
   import { MEASURED } from "./model";
 
   let metric = $state<"word" | "gate">("word");

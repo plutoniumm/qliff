@@ -5,7 +5,7 @@
   // shrink reads as a steady taper. The line + band are a shared-wrapper series;
   // a draw hook adds the "true LER" reference line.
   import { C } from "$lib/colors";
-  import LinePlot, { type DrawKit, type PlotSeries } from "$shared/LinePlot.svelte";
+  import LinePlot, { type DrawKit, type PlotSeries } from "$lib/LinePlot.svelte";
 
   let {
     trace,

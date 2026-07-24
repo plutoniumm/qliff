@@ -17,19 +17,18 @@ from .color import (
     triangular_layout,
 )
 
-# Single source of truth for the canonical code families the Studio server can
-# offer. One CodeFamily record per family carries every fact the scattered server
-# tables used to re-derive by name: the human `label`, the `min_distance`, the
-# circuit `builder` (a uniform (distance, rounds, p, channel, pattern, start, edge)
-# adapter over qec.codes / qec.color), the `num_data` sizer, the offered
-# `default_decoders`, the stabiliser-pattern `variant_axes`, and whether the DEM is
-# `graphlike`. Adding a family is a ONE-record append here -- run.py's circuit
-# dispatch + num-data lookup and api._TEMPLATES all read from this registry, so the
-# family list can never drift between the builder and the /templates payload.
+# Single source of truth for the canonical code families qliff offers. One
+# CodeFamily record per family carries every fact the scattered builder tables used
+# to re-derive by name: the human `label`, the `min_distance`, the circuit `builder`
+# (a uniform (distance, rounds, p, channel, pattern, start, edge) adapter over
+# qec.codes / qec.color), the `num_data` sizer, the offered `default_decoders`, the
+# stabiliser-pattern `variant_axes`, and whether the DEM is `graphlike`. Adding a
+# family is a ONE-record append here, so the family list can never drift between the
+# builder and its metadata.
 #
 # This is a low leaf: it imports only the numpy-only builders (codes / color, which
-# pull lattice / circuit), never the decoders or the server, so the server imports
-# it and not the other way round.
+# pull lattice / circuit), never the decoders, so higher layers import it and not
+# the other way round.
 
 # Pauli DEM decoders every graphlike family offers (matching default + dense
 # fallbacks). Non-Pauli / coherent channels route to `coherent` (see decoder.py).
@@ -98,7 +97,7 @@ def _variant(fn: Callable[..., Circuit]) -> Callable[..., Circuit]:
 def _rotated_variant(fn: Callable[..., Circuit]) -> Callable[..., Circuit]:
     """
     Adapt rotated_surface_code (rows, cols, ...) to the uniform single-`distance`
-    builder signature -- the server/Studio still offer one distance slider (a square
+    builder signature -- the family builders take one distance (a square
     rows=cols patch); rectangular (rows != cols) patches are only reachable by
     calling qec.codes.rotated_surface_code directly.
     """
@@ -129,8 +128,8 @@ def _color(family: str) -> Callable[..., Circuit]:
     return build
 
 
-# The canonical families, in the exact order /templates offers them. Every family
-# dispatched by the server lives here -- adding one is a single record.
+# The canonical families. Every family qliff offers lives here -- adding one is a
+# single record.
 FAMILIES: dict[str, CodeFamily] = {
     "repetition": CodeFamily(
         name="repetition",

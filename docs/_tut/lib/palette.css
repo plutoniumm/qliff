@@ -1,0 +1,14 @@
+/* qliff palette -- the concrete accent + Pauli/stabilizer hexes for the docs
+   explainers (_tut/theme.css). theme.css keeps its own gradients, surface tokens,
+   VitePress mappings and light-mode overrides; only these base hues live here.
+   theme.css @imports this partial via a relative path. */
+:root {
+  --accent: #8b6cff;
+  --accent-2: #4cc9f0;
+  --accent-3: #ff5d8f;
+  --ink-on-accent: #0a0b16;
+
+  /* Pauli / stabilizer types (anchor the phase wheel) */
+  --x: #ff5d8f;
+  --z: #4cc9f0;
+}

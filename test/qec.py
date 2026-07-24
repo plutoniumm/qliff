@@ -1,6 +1,5 @@
 import os
 import sys
-from typing import get_args
 
 import numpy as np
 
@@ -9,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from MDR import Exam, Question, load
 
 from qliff import Circuit
-from qliff.noise.channel import CHANNEL_META, apply_data_noise, channel_arg
+from qliff.noise.channel import apply_data_noise, channel_arg
 from qliff.qec import (
     DetectorErrorModel,
     DetectorSampler,
@@ -19,7 +18,7 @@ from qliff.qec import (
     toric_code,
     unrotated_surface_code,
 )
-from qliff.qec.decoder import DECODER_SPECS, make_circuit_decoder
+from qliff.qec.decoder import make_circuit_decoder
 from qliff.qec.sampler import StratifiedDetectorSampler
 from qliff.qec.threshold import (
     _cv_stratum,
@@ -31,8 +30,6 @@ from qliff.qec.threshold import (
     _stratum_config_count,
     _weighted_error_rate,
 )
-from qliff.qec.registry import FAMILIES
-from qliff.server.schema import CodeFamily, DecoderName
 
 
 def _flip_circuit(p):
@@ -391,68 +388,6 @@ class NoiseChannelTests(Question):
         make_circuit_decoder("mwpm", _BUILDERS["repetition"]("DEPOLARIZE2"))
 
 
-class WireContractTests(Question):
-    """
-    Guards that the dispatch registries stay byte-identical to the HTTP wire schema
-    (schema.py Literals + CHANNEL_META), which the frontend mirrors by hand. The
-    registries provide metadata BEHIND these names; the names themselves must not drift.
-    """
-
-    def test_family_names_match_schema(self):
-        """
-        The code-family registry keys are exactly the schema.CodeFamily wire Literal
-        members, so /templates can never offer a family the wire contract lacks.
-        """
-        self.assertEqual(
-            sorted(FAMILIES),
-            sorted(get_args(CodeFamily)),
-            msg="registry families != schema.CodeFamily members",
-        )
-
-    def test_decoder_names_match_schema(self):
-        """
-        The decoder registry keys are exactly the schema.DecoderName wire Literal
-        members, so the capability flags and /decoders payload cannot drift from it.
-        """
-        self.assertEqual(
-            sorted(DECODER_SPECS),
-            sorted(get_args(DecoderName)),
-            msg="registry decoders != schema.DecoderName members",
-        )
-
-    def test_channel_keys_match_served_channels(self):
-        """
-        CHANNEL_META's keys are exactly the channel names the /channels payload serves,
-        so the served channel list stays welded to the noise engine's single source.
-        """
-        from qliff.server import api
-
-        self.assertEqual(
-            sorted(CHANNEL_META),
-            sorted(c.name for c in api._CHANNELS),
-            msg="CHANNEL_META keys != served /channels names",
-        )
-
-    def test_served_payloads_track_registries(self):
-        """
-        The /templates and /decoders payloads mirror their registries in order and
-        membership -- deriving both from one place, not a hand-kept parallel list.
-        """
-        from qliff.server import api
-
-        self.assertEqual(
-            [t.family for t in api._TEMPLATES],
-            list(FAMILIES),
-            msg="/templates family order must match the family registry",
-        )
-
-        self.assertEqual(
-            [d.name for d in api._DECODERS],
-            list(DECODER_SPECS),
-            msg="/decoders order must match the decoder registry",
-        )
-
-
 class StratifiedLERTests(Question):
     def test_masses_are_exact(self):
         """
@@ -661,9 +596,6 @@ if __name__ == "__main__":
     rc |= Exam(
         "NoiseChannels", "Noise-channel arg shaping across code builders", "channels.md"
     ).run(load(NoiseChannelTests))
-    rc |= Exam(
-        "WireContract", "Registry <-> wire-schema sync guards", "wire_contract.md"
-    ).run(load(WireContractTests))
     rc |= Exam(
         "StratifiedLER",
         "Self-normalised stratified logical-error-rate estimator",

@@ -5,7 +5,7 @@ import numpy as np
 from ..circuit import Circuit
 from .lattice import build_circuit
 
-# Color-code & triangular-axis CSS families (NEW for studio). The square families
+# Color-code & triangular-axis CSS families. The square families
 # (qec/codes.py) live on a rectangular grid; these three live on the triangular /
 # hexagonal axes the Part-A diagrams draw. All three are built on one PERIODIC
 # triangular torus and are medial duals of each other, distinguished by where the

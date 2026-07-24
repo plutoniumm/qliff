@@ -5,7 +5,7 @@
   // is visible; linear x in p. The curve is a shared-wrapper series; a draw hook
   // adds the MC points and their +/- stderr error-bar caps.
   import { C, withAlpha } from "$lib/colors";
-  import LinePlot, { type DrawKit, type PlotSeries } from "$shared/LinePlot.svelte";
+  import LinePlot, { type DrawKit, type PlotSeries } from "$lib/LinePlot.svelte";
 
   export interface MCPoint {
     p: number;

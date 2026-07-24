@@ -3,7 +3,7 @@
   // a base state; a live continuous RZ(theta) rides on top. This wrapper owns the
   // control state (was in the old Coherent.svelte page component) so the markdown
   // page can mount it as ONE self-contained island.
-  import { C } from "$shared/colors";
+  import { C } from "$lib/colors";
   import Bloch from "./Bloch.svelte";
   import Range from "./Range.svelte";
   import { applyGate, applyRz, type Vec3, type GateName } from "./bloch";

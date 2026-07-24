@@ -277,7 +277,7 @@ class BondCapTests(Question):
 
     def test_circuit_factory_threads_max_bond(self):
         """
-        make_circuit_decoder -- the route threshold and the server take -- carries
+        make_circuit_decoder -- the route threshold takes -- carries
         max_bond down to the tensor-network decoder it builds.
         """
         circuit = rotated_surface_code(3, 3, 3, 0.06)

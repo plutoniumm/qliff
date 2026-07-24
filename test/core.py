@@ -1,6 +1,7 @@
 import math
 import os
 import random
+import re
 import sys
 from collections import Counter
 
@@ -45,9 +46,18 @@ class Smoke(Question):
 
     def test_version(self):
         """
-        Version is sourced from the Rust crate and equals 1.0.0.
+        Version is sourced from the Rust crate and matches Cargo.toml [package].
         """
-        self.assertEqual(qliff.__version__, "1.0.0", msg="version must be 1.0.0")
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cargo = open(os.path.join(root, "Cargo.toml")).read()
+        package = cargo.split("[package]", 1)[1].split("\n[", 1)[0]
+        expected = re.search(r'version\s*=\s*"([^"]+)"', package).group(1)
+
+        self.assertEqual(
+            qliff.__version__,
+            expected,
+            msg=f"__version__ must match Cargo.toml ({expected})",
+        )
 
 
 class TableauTests(Question):

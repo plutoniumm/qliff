@@ -1,6 +1,6 @@
 {
   "name": "qliff",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Documentation qliff: Aaronson-Gottesman Tableu based quantum circuit simulator",
   "type": "module",

@@ -2,7 +2,7 @@
   // Section-03 cluster: coherent amplitude (~ theta) vs the matched Pauli
   // probability (~ theta^2). The two series are static; a slider drives the live
   // marker so the reader can compare the curves at any angle.
-  import { C } from "$shared/colors";
+  import { C } from "$lib/colors";
   import Plot, { type Series } from "./Plot.svelte";
   import Range from "./Range.svelte";
 

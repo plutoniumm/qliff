@@ -14,8 +14,6 @@
     "paths": {
       "$lib": ["_tut/lib"],
       "$lib/*": ["_tut/lib/*"],
-      "$shared": ["../shared/qui"],
-      "$shared/*": ["../shared/qui/*"],
       "uplot": ["node_modules/uplot"],
       "uplot/*": ["node_modules/uplot/*"]
     }

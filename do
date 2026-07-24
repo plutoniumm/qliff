@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ./do develop | build | test | bench | deploy | lint | studio | serve | dev
+# ./do develop | build | test | bench | deploy | lint
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -229,7 +229,6 @@ build_local_wheels() {
   ensure_rust
   ensure_xwin
   ensure_build_deps
-  studio                       # SPA -> qliff/server/static (shipped in each wheel)
   cd "$ROOT"
 
   rm -rf wheelhouse dist build
@@ -313,52 +312,16 @@ lint() {
 
   if command -v eastwood >/dev/null 2>&1; then
     eastwood src                                # rust core
-    eastwood -lang python $(find qliff -name '*.py')  # python (skips built server/static/)
-    if [ -d studio/src ]; then
-      eastwood studio/src                       # studio frontend (ts + svelte)
-    fi
+    eastwood -lang python $(find qliff -name '*.py')  # python
     if [ -d docs/_tut ]; then
       eastwood docs/_tut                        # docs tutorials explainers (ts + svelte)
     fi
   fi
 
-  # svelte type-check, when each frontend toolchain is installed.
-  if [ -d studio/node_modules ]; then
-    (cd studio && npx --no-install svelte-check --tsconfig ./tsconfig.json)
-  fi
+  # svelte type-check, when the docs toolchain is installed.
   if [ -d docs/node_modules ]; then
     (cd docs && npx --no-install svelte-check --tsconfig ./tsconfig.json)
   fi
-}
-
-# build the Studio frontend into qliff/server/static (shipped in the wheel).
-studio() {
-  has npm
-  cd "$ROOT/studio"
-  [ -d node_modules ] || npm install
-  npm run build
-}
-
-# launch the Studio web server (the `qliff-server` command) from the source tree.
-# extra args pass through (e.g. ./do serve --port 9000 --no-browser).
-serve() {
-  has python
-  cd "$ROOT"
-  python -m qliff "$@"
-}
-
-# the full dev stack in one command: the qliff API server (background, default
-# port) + the Vite dev server with HMR (foreground). Vite proxies /api to the
-# API server, so the browser only ever talks to one origin (http://127.0.0.1:5174).
-# Ctrl-C stops both.
-dev() {
-  has python npm
-  cd "$ROOT/studio"
-  [ -d node_modules ] || npm install
-  python -m qliff --no-browser &
-  local api_pid=$!
-  trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM
-  npm run dev
 }
 
 case "${1:-}" in
@@ -368,11 +331,8 @@ case "${1:-}" in
   bench)   bench ;;
   deploy)  deploy ;;
   lint)    shift; lint "$@" ;;
-  studio)  studio ;;
-  serve)   shift; serve "$@" ;;
-  dev)     dev ;;
   *)
-    echo "usage: ./do {develop|build|test|bench|deploy|lint|studio|serve|dev}" >&2
+    echo "usage: ./do {develop|build|test|bench|deploy|lint}" >&2
     exit 1
     ;;
 esac

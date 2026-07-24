@@ -215,8 +215,8 @@ class ChannelMeta:
 
 
 # Source of truth for every noise channel: factory + UI/builder metadata, keyed by
-# instruction name. Add a channel here once and NOISE_FACTORIES, the arg-shape sets,
-# and the server channel table (later pass) all pick it up.
+# instruction name. Add a channel here once and NOISE_FACTORIES and the arg-shape
+# sets all pick it up.
 CHANNEL_META: dict[str, ChannelMeta] = {
     "DEPOLARIZE1": ChannelMeta(
         factory=Depolarize,

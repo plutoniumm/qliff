@@ -63,7 +63,6 @@ export default defineConfig({
           { text: 'Noise', link: '/noise' },
           { text: 'Observables & Metrics', link: '/observables' },
           { text: 'Error Correction', link: '/qec' },
-          { text: 'Studio', link: '/studio' },
         ]
       },
       {
@@ -128,11 +127,8 @@ export default defineConfig({
       // colors, ...). Points at docs/_tut/lib.
       alias: {
         $lib: fileURLToPath(new URL('../_tut/lib', import.meta.url)),
-        // $shared is the cross-codebase toolkit at repo-root shared/qui, shared
-        // with the studio SPA so both builds import one copy (colors, rng).
-        $shared: fileURLToPath(new URL('../../shared/qui', import.meta.url)),
-        // uplot (used by $shared/LinePlot) lives in docs/node_modules; the shared
-        // dir has no node_modules of its own, so point bare `uplot` imports here.
+        // uplot (used by lib/LinePlot) lives in docs/node_modules; point bare
+        // `uplot` imports here.
         uplot: fileURLToPath(new URL('../node_modules/uplot', import.meta.url)),
       },
     },

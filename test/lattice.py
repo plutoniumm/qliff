@@ -10,7 +10,7 @@ from qliff.qec import DetectorErrorModel, DetectorSampler, build_circuit, resolv
 
 def _square_tiles(rows, cols):
     """
-    A contiguous rows x cols grid of square studio tiles.
+    A contiguous rows x cols grid of square tiles.
     """
     out = []
     for r in range(rows):
@@ -211,7 +211,7 @@ class BuildCircuitTests(Question):
 
 if __name__ == "__main__":
     rc = 0
-    rc |= Exam("ResolveTiles", "Studio tile to patch mapping", "resolve_tiles.md").run(
+    rc |= Exam("ResolveTiles", "Tile to patch mapping", "resolve_tiles.md").run(
         load(ResolveTilesTests)
     )
     rc |= Exam(

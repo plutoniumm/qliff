@@ -22,7 +22,7 @@ with open("README.md", encoding="utf-8") as fh:
 
 setup(
     name="qliff",
-    version="0.2.0",
+    version="0.2.1",
     description=(
         "Clifford + noisy stabilizer simulator: noise-free and noisy "
         "(importance-sampled) stabilizer simulation with a native core."
@@ -54,23 +54,9 @@ setup(
     extras_require={
         "dev": ["setuptools-rust", "twine", "black", "wheel"],
         "bench": ["stim", "pymatching"],
-        # the `qliff` web studio: FastAPI server + MWPM/BP-OSD decoders. Kept out
-        # of the core so `import qliff` stays numpy-only.
-        "studio": [
-            "fastapi",
-            "uvicorn[standard]",
-            "pymatching",
-            "ldpc",
-        ],
     },
     setup_requires=["setuptools-rust"],
     rust_extensions=rust_extensions,
-    # the built SPA (./do studio -> qliff/server/static) ships in the wheel.
-    include_package_data=True,
-    package_data={"qliff": ["server/static/*", "server/static/**/*"]},
-    # the console command is `qliff-server` (not `qliff`) so it doesn't collide
-    # with the `qliff` import / package directory name on PATH.
-    entry_points={"console_scripts": ["qliff-server = qliff.server.cli:main"]},
     # Tag wheels cp311-abi3 (PEP 384 stable ABI) regardless of the building
     # Python, so one wheel per platform serves every Python >= 3.11. Matches the
     # abi3-py311 pyo3 feature; without this bdist_wheel would tag version-specific

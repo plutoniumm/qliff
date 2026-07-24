@@ -139,8 +139,8 @@ class DecoderSpec:
     its `mode` ("dem" builds a DetectorErrorModel, "circuit" consumes the circuit
     directly), and the `factory` that constructs it. A `bonded` factory takes
     (target, max_bond); every other takes (target) alone. Single source of truth: the
-    server's Pauli-only / graphlike capability sets and the /decoders payload all read
-    from here, so a decoder's capability flags cannot drift.
+    Pauli-only / graphlike capability sets all read from here, so a decoder's
+    capability flags cannot drift.
     """
 
     name: str
@@ -185,7 +185,7 @@ def _coherent_factory(circuit, max_bond: int | None = None) -> Decoder:
     return CoherentDecoder(circuit, max_bond=max_bond)
 
 
-# Every decoder the engine offers, in the exact order /decoders lists them. "mld" and
+# Every decoder the engine offers, in registry order. "mld" and
 # "tn" are the SAME contraction but no longer aliases: "mld" is the exact reference
 # decoder and refuses a bond cap, while "tn" is `bonded` and takes `max_bond=chi` to
 # truncate the contraction ("tn" with max_bond=None, the default, is still bit-for-bit
@@ -374,7 +374,7 @@ def make(name: str, circuit, max_bond: int | None = None) -> Decoder:
 
 def make_circuit_decoder(name: str, circuit, max_bond: int | None = None) -> Decoder:
     """
-    Circuit-aware decoder factory shared by the threshold / server code. Thin alias
+    Circuit-aware decoder factory used by the threshold sweeps. Thin alias
     for `make`, kept for callers importing the historical name.
     """
     return make(name, circuit, max_bond)

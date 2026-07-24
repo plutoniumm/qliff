@@ -1,11 +1,11 @@
 <script lang="ts" module>
-  // One reusable uPlot (canvas) line chart shared by the docs explainers and the
-  // studio SPA. It replaces four hand-rolled SVG plots: hand it series in DATA
+  // One reusable uPlot (canvas) line chart for the docs explainers. It replaces
+  // four hand-rolled SVG plots: hand it series in DATA
   // coordinates, a per-axis scale (lin/log), explicit ranges + labels, and an
   // optional draw-hook callback for custom overlays (threshold lines, error bars,
   // markers, ...). It sizes itself to its container, resolves CSS color tokens to
   // concrete colors so canvas can use them, and re-resolves on the VitePress
-  // light/dark toggle. Import via `$shared/LinePlot.svelte`.
+  // light/dark toggle. Import via `$lib/LinePlot.svelte`.
 
   // One plotted line. `pts` are [x, y] pairs in data coordinates. An optional
   // `band` (per-point lo/hi, index-aligned to pts) draws a filled +/- region.

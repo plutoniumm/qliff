@@ -2,7 +2,7 @@
   // Section-04 cluster: the signed quasiprobability mix for RZ(theta). One slider
   // drives BOTH the Bloch rotation and the signed weight bars, plus a live ledger of
   // the four branch weights and the running totals (sum w = 1, sum |w| = gamma).
-  import { C } from "$shared/colors";
+  import { C } from "$lib/colors";
   import Bloch from "./Bloch.svelte";
   import WeightBars from "./WeightBars.svelte";
   import Range from "./Range.svelte";

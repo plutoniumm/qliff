@@ -3,7 +3,7 @@
   // the damping figure (Bloch pull toward |0> + signed weight bars + ledger) AND the
   // negativity gamma(p) curve below it, whose marker tracks the same p. The two
   // figures share p, so they stay ONE island (the page's tightly-coupled cluster).
-  import { C } from "$shared/colors";
+  import { C } from "$lib/colors";
   import Bloch from "./Bloch.svelte";
   import WeightBars from "./WeightBars.svelte";
   import Plot, { type Series } from "./Plot.svelte";

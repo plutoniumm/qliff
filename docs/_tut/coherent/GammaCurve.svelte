@@ -3,7 +3,7 @@
   // decomposition. A gauge shows gamma at the current angle; the slider scrubs the
   // marker along the curve. (In the old page component this slider shared its state
   // with the section-04 decomposition; as a self-contained island it owns its own.)
-  import { C } from "$shared/colors";
+  import { C } from "$lib/colors";
   import Plot, { type Series } from "./Plot.svelte";
   import Range from "./Range.svelte";
   import { rotationGamma } from "./channel";

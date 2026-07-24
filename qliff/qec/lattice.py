@@ -232,7 +232,7 @@ def resolve_tiles(
     tiles: list[dict],
 ) -> tuple[int, list[tuple[str, list[int]]], list[tuple[str, list[int]]]]:
     """
-    Map a list of studio tiles to a stabiliser patch from their bounding box. All
+    Map a list of tiles to a stabiliser patch from their bounding box. All
     tiles must share a kind: "square" -> rotated-surface patch; "tri" -> triangular
     surface code; "hex" -> 6.6.6 honeycomb color code (both on the triangular axes,
     sized by the bounding box). Returns (num_data, stabilizers, observables).

@@ -14,7 +14,7 @@
   // hook adds the live slider MARKER (a vertical line) plus an interpolated dot
   // per series at that x, so the figure tracks the slider.
   import { C } from "$lib/colors";
-  import LinePlot, { type DrawKit } from "$shared/LinePlot.svelte";
+  import LinePlot, { type DrawKit } from "$lib/LinePlot.svelte";
 
   let {
     series,

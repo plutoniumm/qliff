@@ -6,7 +6,7 @@
   // the four controls -- no $effect writes state, so no effect_update_depth trap.
   import Slider from "$lib/Slider.svelte";
   import { C, withAlpha } from "$lib/colors";
-  import LinePlot, { type DrawKit, type PlotSeries } from "$shared/LinePlot.svelte";
+  import LinePlot, { type DrawKit, type PlotSeries } from "$lib/LinePlot.svelte";
   import { binomialShots, flatShots, location, totalGamma, type Kind } from "./model";
 
   let kind = $state<Kind>("AMPLITUDE_DAMP");

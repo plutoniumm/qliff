@@ -6,13 +6,13 @@
    tokens / .prose / shared classes rather than reinventing styles, so the pages
    stay visually identical. */
 
-/* Shared qliff palette (accent + Pauli hexes) -- kept in one place so the docs
-   explainers and the studio SPA can not drift. Defined on :root; the .qtut domain
-   hues and the light-mode overrides below still win by specificity. */
-@import "../../shared/qui/palette.css";
+/* Shared qliff palette (accent + Pauli hexes) -- kept in one place for the docs
+   explainers. Defined on :root; the .qtut domain hues and the light-mode overrides
+   below still win by specificity. */
+@import "./lib/palette.css";
 
 /* Domain tokens for pure-CSS figures authored in the markdown BODY -- the q-*
-   components (shared/qui/components.css) used OUTSIDE a .qtut island, e.g. the
+   components (lib/components.css) used OUTSIDE a .qtut island, e.g. the
    static figures in the tutorial .md pages. The .qtut block below defines these
    only inside the interactive pane; mirror them here at :root so a plain-markdown
    figure resolves var(--ok)/var(--bad)/var(--y)/var(--muted)/... and follows the
@@ -54,7 +54,7 @@
 
   /* ACCENTS + DOMAIN colors are the explainers' visual language (decoder purple,
      Pauli X/Z, success/failure...). The shared base hues (--accent*, --x, --z) live
-     in shared/qui/palette.css; the domain hues below and the light-mode tweaks in
+     in lib/palette.css; the domain hues below and the light-mode tweaks in
      the `:root:not(.dark) .qtut` block stay docs-specific. Kept saturated so
      SVG/canvas marks read on either background. */
   --grad-soft: linear-gradient(125deg,
